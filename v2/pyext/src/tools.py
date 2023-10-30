@@ -410,3 +410,197 @@ def subsequence_consistency(sequence, subsequence, start_residue):
     #print("DHSIUO", subsequence, start_residue, sequence)
     return sequence[start_residue-1:start_residue-1+len(subsequence)]==subsequence
 
+
+import pyopenms as oms
+import pandas as pd
+import numpy as np
+
+
+def get_isotope_envelope(replicate):
+    #print(f'{replicate.peptide.sequence} {replicate.timepoint.time} {replicate.charge_state}')
+    # Step 1: Centroiding
+    seq = oms.AASequence.fromString(replicate.peptide.sequence) 
+    mfull = seq.getMonoWeight()
+    mz_values = replicate.raw_ms['m/z'].values - mfull/float(replicate.charge_state)
+    intensities = replicate.raw_ms['Intensity'].values 
+
+    spectrum = oms.MSSpectrum()
+    spectrum.set_peaks((mz_values, intensities))
+    picker = oms.PeakPickerHiRes()
+    picked_spectrum = oms.MSSpectrum()
+    picker.pick(spectrum, picked_spectrum)
+
+    mz_picked, intensity_picked = picked_spectrum.get_peaks()
+    df_picked = pd.DataFrame({'m/z': mz_picked, 'Intensity': intensity_picked})
+
+    # if bad drop replicate
+    if df_picked.empty:
+        replicate.timepoint.replicates.remove(replicate)
+        print(f'bad replicate droped: {replicate.peptide.sequence} {replicate.timepoint.time} {replicate.charge_state}')
+        return None
+
+    
+    # Step 2: Select highest near integer
+    max_mz = int(df_picked['m/z'].max())
+    selected_mz = []
+    selected_intensity = []
+    
+    for mz_int in range(max_mz+1):
+        mask = (df_picked['m/z'] >= mz_int-0.1) & (df_picked['m/z'] <= mz_int+0.1)
+        peaks_in_range = df_picked[mask]
+        
+        if not peaks_in_range.empty:
+            max_peak = peaks_in_range.loc[peaks_in_range['Intensity'].idxmax()]
+            selected_mz.append(max_peak['m/z'])
+            selected_intensity.append(max_peak['Intensity'])
+            
+    selected_df = pd.DataFrame({
+        'm/z': selected_mz,
+        'Intensity': selected_intensity / np.sum(selected_intensity)  # Normalizing intensity
+    })
+
+    # round m/z to integer
+    selected_df['m/z'] = selected_df['m/z'].apply(round)
+
+    # if bad drop replicate
+    if selected_df.empty:
+        replicate.timepoint.replicates.remove(replicate)
+        print(f'bad replicate droped: {replicate.peptide.sequence} {replicate.timepoint.time} {replicate.charge_state}')
+        return None
+
+    # if no zero peak, add one
+    if 0 not in selected_df['m/z'].values:
+        df_0 = pd.DataFrame({'m/z': [0], 'Intensity': [0]})
+        selected_df = pd.concat([df_0, selected_df], ignore_index=True).reset_index(drop=True)
+
+    return selected_df
+
+
+from pyopenms import AASequence, CoarseIsotopePatternGenerator
+
+def get_theoretical_isotope_distribution(replicate):
+    # Create an AASequence object from the peptide sequence
+    peptide_obj = AASequence.fromString(replicate.peptide.sequence)
+
+    # Get the empirical formula of the peptide
+    formula = peptide_obj.getFormula()
+    isotope_generator = CoarseIsotopePatternGenerator(10)
+    isotope_distribution = isotope_generator.run(formula)
+
+    # Get the monoisotopic mass
+    mono_mz = peptide_obj.getMonoWeight() / replicate.charge_state
+
+    # Adjust the m/z values relative to the monoisotopic mass and considering the charge state
+    theo_mz = np.array([(iso.getMZ() / replicate.charge_state) - mono_mz for iso in isotope_distribution.getContainer()])
+    theo_intensity = np.array([iso.getIntensity() for iso in isotope_distribution.getContainer()])
+
+    #plt.stem(theo_mz, theo_intensity, linefmt='-', markerfmt=' ', basefmt=" ",)
+    df_theo = pd.DataFrame({'m/z': theo_mz, 'Intensity': theo_intensity})
+    return df_theo
+
+
+
+def set_t0_rep_score(dataset):
+    '''
+    Set the score of the all the 0s replicate, based on KL divergence 
+    with theoretical isotope distribution
+    '''
+    t0_reps = [rep for pep in dataset.peptides for tp in pep.timepoints for rep in tp.replicates if rep.timepoint.time == 0 ]
+    for t0_rep in t0_reps:
+        divergence = get_divergence(get_isotope_envelope(t0_rep)['Intensity'].values,
+                                    get_theoretical_isotope_distribution(t0_rep)['Intensity'].values,
+                                    method='JS')
+        t0_rep.set_score(divergence)
+
+    print("Set score for %d t0 replicates" % len(t0_reps))
+
+
+from numba import njit
+
+@njit
+def custom_kl_divergence(p, q):
+    """Calculate the Kullback-Leibler divergence between two probability distributions."""
+        
+    # Ensure the probabilities are normalized
+    x1 = p / np.sum(p)
+    x2 = q / np.sum(q)
+
+    divergence = np.sum(x1 * np.log(x1 / x2))
+    return divergence
+
+@njit
+def jensen_shannon_divergence(p, q):
+    x1 = p / np.sum(p)
+    x2 = q / np.sum(q)
+    m = (x1 + x2) / 2
+    return (custom_kl_divergence(x1, m) + custom_kl_divergence(x2, m)) / 2
+
+@njit
+def custom_pad(array, target_length, pad_value=1e-10):
+    #replace 0s with a small value
+    array[array == 0] = pad_value
+    padded_array = np.full(target_length, pad_value)  
+    padded_array[:len(array)] = array 
+    return padded_array
+
+
+@njit
+def norm_pad_two_arrays(p, q):
+    '''
+    normalize two arrays and pad them to the same size and 
+    '''
+    x1 = p / np.sum(p)
+    x2 = q / np.sum(q)
+
+    size = max(len(x1), len(x2))
+    x1 = custom_pad(x1, size)
+    x2 = custom_pad(x2, size)
+    return x1, x2
+
+
+@njit
+def get_divergence(p, q, method='KL'):
+    
+    x1, x2 = norm_pad_two_arrays(p, q)
+    
+    if method == 'KL':
+        return custom_kl_divergence(x1, x2)
+    elif method == 'JS':
+        return jensen_shannon_divergence(x1, x2)
+    
+
+@njit
+def get_mse(p, q):
+
+    x1, x2 = norm_pad_two_arrays(p, q)
+    
+    return np.mean(np.square(x1 - x2))
+
+@njit
+def get_mae(p, q):
+
+    x1, x2 = norm_pad_two_arrays(p, q)
+    
+    return np.mean(np.abs(x1 - x2))
+
+
+@njit
+def event_probabilities(p_array):
+    n = p_array.shape[0]
+    # dp[i][j] stores the probability of j successes in the first i events
+    dp = np.zeros((n+1, n+1))
+    dp[0][0] = 1  # Base case: probability of 0 successes in 0 events is 1
+    
+    for i in range(1, n+1):
+        p = p_array[i-1]
+        q = 1 - p
+        dp[i][0] = dp[i-1][0] * q  # Probability of 0 successes in i events
+        
+        for j in range(1, i+1):
+            # Probability of j successes in i events
+            dp[i][j] = dp[i-1][j-1] * p + dp[i-1][j] * q
+    
+    # The probabilities of 0, 1, 2, ..., n successes in n events
+    probabilities = dp[n]
+    
+    return probabilities

@@ -674,7 +674,7 @@ class ParseOutputFile(object):
             print("WARNING: percent value is outside of bounds")
 
         num_samples = int(len(models) * pct)
-        rand_smpl = [models[i] for i in random.sample(xrange(len(models)), num_samples)]
+        rand_smpl = [models[i] for i in random.sample(range(len(models)), num_samples)]
         #print(num_samples, len(models), len(rand_smpl), models)
         return rand_smpl
 

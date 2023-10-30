@@ -14,6 +14,8 @@ from copy import deepcopy
 import os
 from itertools import combinations_with_replacement
 from itertools import permutations
+import tools
+from tqdm import tqdm
 
 # if exp(-diff/temp) > rand: accept
 
@@ -338,7 +340,7 @@ class MCSampler(object):
 
         print("Simulation temperature =", temperature)
         print("Step score | states_avg_protection_factor | mc_acceptance_ratio")
-        for i in range(NSTEPS):
+        for i in tqdm(range(NSTEPS)):
             #print("Step:", i)
             score, model_avg_str, acceptance = self.run_one_step(temperature, write_all)
             acceptance_total += acceptance
@@ -489,19 +491,30 @@ class MCSampler(object):
 
             elif self.sigma_sample_level == "timepoint":
                 for pep in dataset.get_peptides():
+                    
+                    t0_p_D = pep.best_t0_replicate.isotope_envelope # non-deuterated isotope distribution
+
                     for tp in pep.get_timepoints():
 
                         init_sigma = deepcopy(tp.get_sigma())
-                        tp_model_deut = tp.model_deuteration * 100
+                        tp_model_deut = tp.model_deuteration # * 100
+
+                        # model isotope distribution
+                        mpdel_p_D = tools.event_probabilities(tp_model_deut) # deturium isotope distribution
+                        mpdel_full_iso = np.convolve(mpdel_p_D, t0_p_D) # full heavy isotope distribut
 
                         init_score = 0
                         for rep in tp.get_replicates():
-                            init_score += state.scoring_function.forward_model.replicate_score(tp_model_deut, rep.deut, init_sigma)
+                            #init_score += state.scoring_function.forward_model.replicate_score(tp_model_deut, rep.deut, init_sigma)
+                            
+                            exp_isotope_envelope = rep.isotope_envelope
+                            init_score += state.scoring_function.forward_model.replicate_score(mpdel_full_iso, exp_isotope_envelope, init_sigma)
 
                         new_sigma = self.sigma_sampler.propose_move(init_sigma)
                         new_score = 0
                         for rep in tp.get_replicates():
-                            new_score += state.scoring_function.forward_model.replicate_score(tp_model_deut, rep.deut, new_sigma)
+                            exp_isotope_envelope = rep.isotope_envelope
+                            new_score += state.scoring_function.forward_model.replicate_score(mpdel_full_iso, exp_isotope_envelope, new_sigma)
 
                         if metropolis_criteria(init_score, new_score, temperature):
                             tp.set_sigma(new_sigma)

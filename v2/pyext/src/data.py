@@ -5,6 +5,7 @@ import tools
 import hxio
 import numpy
 import numpy.random
+import pandas as pd
 
 def calculate_percent_d(dataset):
     # Calculates the averaged %D over all timepoints in a peptide.
@@ -285,7 +286,14 @@ class Dataset(object):
                 replicates = {}
                 tp_dict = {}
                 for rep in tp.get_replicates():
-                    rep_dict = rep.__dict__
+                    rep_dict = {}
+
+                    #to avioid circular references
+                    properties_to_exclude = ['timepoint', 'peptide', 'raw_ms', 'isotope_envelope']
+                    for key, value in rep.__dict__.items():
+                        if key not in properties_to_exclude:
+                            rep_dict[key] = value
+                
                     #rep_dict["deuteration"] = rep.deut
                     #rep_dict["reliability"] = rep.reliability
                     #rep_dict["retention_time"] = rep.rt
@@ -420,6 +428,7 @@ class Peptide(object):
         self.sequence = sequence
         self.timepoints = []
         self.start_residue = int(start_residue)
+        self.end_residue = int(start_residue) + len(sequence) - 1
         self.num_observable_amides = self.calculate_number_of_observable_amides()
         self.sigma = sigma
         self.charge_state = charge_state
@@ -447,6 +456,14 @@ class Peptide(object):
             score += tp.get_score()
         return score
 
+    def get_best_charge_state(self):
+        tp0_reps = [rep for tp in self.timepoints for rep in tp.replicates if rep.timepoint.time == 0 ]
+        # lowest kl divergence 
+        best_rep = min(tp0_reps, key=lambda x: x.get_score())
+        self.best_charge_state = best_rep.charge_state
+        self.best_t0_replicate = best_rep
+        return self.best_charge_state
+    
     def get_sequence(self):
         return self.sequence
 
@@ -498,7 +515,7 @@ class Peptide(object):
         if sigma is None:
             sigma = self.sigma
         if time not in [tp.time for tp in self.timepoints]:
-            tp = Timepoint(time, sigma)
+            tp = Timepoint(time, sigma, peptide=self)
             self.timepoints.append(tp)
             return tp
         else:
@@ -582,7 +599,7 @@ class Timepoint(object):
     The class contains both the experimental data (as a list of Replicate objects)
     as well as a list of calculated values from the forward model (self.models)
     '''
-    def __init__(self, time, sigma0):
+    def __init__(self, time, sigma0, peptide=None):
         '''
         @param time - Time in seconds
         @param sigma0 - Initial estimate of timepoint error sigma in pctD units. 
@@ -591,6 +608,7 @@ class Timepoint(object):
         self.models = []
         self.replicates = []
         self.sigma = sigma0
+        self.peptide = peptide
 
     def get_score(self):
         score = 0
@@ -601,8 +619,9 @@ class Timepoint(object):
     def number_of_replicates(self):
         return len(self.replicates)
 
-    def add_replicate(self, deut, experiment_id=None, score=1.0, rt=None):
-        self.replicates.append(Replicate(deut, experiment_id=experiment_id, reliability=score, rt=rt))
+    def add_replicate(self, deut, experiment_id=None, score=1.0, rt=None, charge_state=None):
+        self.replicates.append(Replicate(deut, experiment_id=experiment_id, reliability=score, rt=rt, charge_state=charge_state,
+                                         timepoint=self, peptide=self.peptide))
 
     def get_avg_sd(self):
         if len(self.replicates) < 1:
@@ -700,11 +719,14 @@ class Replicate(object):
         @param rid - the deuterium concentration
         @param recovery - the 2D recovery estimate
     """
-    def __init__(self, deut, experiment_id, reliability=1.0, rt=None):
+    def __init__(self, deut, experiment_id, reliability=1.0, rt=None, charge_state=None, timepoint=None, peptide=None):
         self.deut = deut
         self.experiment_id = experiment_id
         self.reliability = reliability
         self.rt = rt
+        self.charge_state = charge_state
+        self.timepoint = timepoint 
+        self.peptide = peptide
 
     def set_score(self, score):
         self.score = score
@@ -717,3 +739,13 @@ class Replicate(object):
 
     def set_prior_probability(self, prior):
         self.prior_probability = prior
+
+    def load_raw_ms_csv(self, csv_file):
+        df = pd.read_csv(csv_file, names=['m/z', 'Intensity'])
+        # normalize intensity to sum to 1
+        df['Intensity'] = df['Intensity'] / df['Intensity'].sum()
+        self.raw_ms = df
+        iso = tools.get_isotope_envelope(self)
+        if iso is not None:
+            self.isotope_envelope = iso['Intensity'].values
+            

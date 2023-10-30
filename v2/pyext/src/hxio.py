@@ -9,6 +9,8 @@ import re
 import os
 import tools
 from itertools import groupby
+from glob import glob
+import pandas as pd
 
 
 
@@ -86,6 +88,7 @@ def import_HXcolumns(infile, sequence, name="Data", percentD=False, conditions=N
         time = float(fields[column_headers.index("time")])
         deut = float(fields[column_headers.index("D_inc")])
         #print("-----", start_res, column_headers.index("start_res"), offset, line)
+        charge_state = int(fields[column_headers.index("charge_state")])
         if not percentD:
             deut = deut / tools.calculate_number_of_observable_amides(sequence, n_fastamides) * 100
 
@@ -96,12 +99,13 @@ def import_HXcolumns(infile, sequence, name="Data", percentD=False, conditions=N
 
         #print("IO", sequence, start_res)
 
-        new_peptide = dataset.create_peptide(sequence, start_res)
+        #new_peptide = dataset.create_peptide(sequence, start_res, charge_state=charge_state)
+        new_peptide = dataset.create_peptide(sequence, start_res,)
 
         if new_peptide is not None:
             # If the time is 0.0, that's weird.  Ignore that.
-            if time==0.0:
-                continue
+            #if time==0.0:
+            #    continue
 
             if deut < 105:  # XXX Hard coded cap on %D value.  Not ideal.
                 new_timepoint=True
@@ -115,7 +119,7 @@ def import_HXcolumns(infile, sequence, name="Data", percentD=False, conditions=N
      
                 # add the deuteration value as a replicate.
                 # Any other replicate information from the file should be added at this step.
-                tp.add_replicate(deut, score=score)
+                tp.add_replicate(deut, score=score,charge_state=charge_state)
 
             new_peptide.add_timepoint(time)
 
@@ -322,6 +326,40 @@ def import_Waters(infile, state=None):
     """
     data = Dataset()
 
+
+
+def load_raw_ms_to_hdxms_data(dataset:Dataset, raw_spectra_path):
+    '''
+    Load raw MS data from csv files to Dataset object. 
+    !!! use it before reindex_peptide_from_pdb
+    '''
+
+    state_raw_spectra_path = os.path.join(raw_spectra_path, dataset.name)
+    path_dict = {}
+    folders = sorted(glob(state_raw_spectra_path + '/*'))
+
+    for folder in folders:
+        start, end, seq = folder.split('/')[-1].split('-')
+        #start, end, seq = int(start)+2, int(end), seq[2:]     # skip first two res
+        start, end, seq = int(start), int(end), seq
+        pep_idf = f'{start}-{end} {seq}'
+        path_dict[pep_idf] = folder
+
+
+    for pep in dataset.get_peptides():
+        pep_idf = f'{pep.start_residue}-{pep.end_residue} {pep.sequence}'
+        pep_sub_folder =  path_dict[pep_idf]
+
+        for tp in pep.timepoints:
+            for rep in tp.get_replicates():
+                if tp.time == 0:
+                    csv_name = f'Non-D-1-z{rep.charge_state}.csv'
+                else:
+                    csv_name = f'{int(tp.time)}s-1-z{rep.charge_state}.csv'
+                csv_file_path = os.path.join(pep_sub_folder, csv_name)
+                rep.load_raw_ms_csv(csv_file_path)
+
+    print('Done loading raw MS data.')
 
 
 class HDXWorkbench(object):
