@@ -342,7 +342,7 @@ class GaussianNoiseModelIsotope(object):
                 self.upper_bound = bounds[1]
 
             if bounds[0] is None:
-                self.lower_bound = 0.0
+                self.lower_bound = -10
             else:
                 self.lower_bound = bounds[0]
 
@@ -350,10 +350,10 @@ class GaussianNoiseModelIsotope(object):
         # Forward model
         #priors = self.model_prior(protection_factor) * self.exp_prior(exp) * self.sigma_prior()
         #raw_likelihood = math.exp(-(tools.get_mae(model, exp)**2)/(2*sigma**2))/(sigma*math.sqrt(2*numpy.pi))
-        raw_likelihood = math.exp(-(tools.get_divergence(model, exp, method='KL')**2)/(2*sigma**2))/(sigma*math.sqrt(2*numpy.pi))
+        #raw_likelihood = math.exp(-(tools.get_divergence(model, exp, method='KL')**2)/(2*sigma**2))/(sigma*math.sqrt(2*numpy.pi))
+        raw_likelihood = math.exp(-(tools.get_sum_ae(model, exp)**2)/(2*sigma**2))/(sigma*math.sqrt(2*numpy.pi))
         if self.truncated:
-            raw_likelihood *= 1/ ( 0.5 * ( scipy.special.erf( (self.upper_bound-exp)/sigma * math.sqrt(3.1415) ) - scipy.special.erf( (self.lower_bound-exp)/sigma * math.sqrt(3.1415) ) )  )
-        raw_likelihood = tools.get_divergence(model, exp, method='JS')
+            raw_likelihood *= 1/ ( 0.5 * ( scipy.special.erf( (self.upper_bound-exp)/sigma * math.sqrt(3.1415) ) - scipy.special.erf( (self.lower_bound-exp)/sigma * math.sqrt(3.1415) ) ) )
 
         return raw_likelihood
 
@@ -404,14 +404,9 @@ class GaussianNoiseModelIsotope(object):
                 for r in observable_residues:
                     model_tp_raw_deut.append(self.state.residue_incorporations[d][r][tp.time])
                 model_tp_raw_deut = numpy.array(model_tp_raw_deut)
-                #------------------------------
-                # Here is where we would add back exchange estimate
-                #------------------------------
-
-                # Convert raw deuterons into a percent
-                #model_tp_deut = float(model_tp_raw_deut)/pep.num_observable_amides * 100
+                
                 # To do: Full-D correction
-                #model_tp_deut = model_tp_raw_deut/(pep.full_d/pep.num_observable_amides) * 100
+                model_tp_raw_deut = model_tp_raw_deut*(pep.max_d/pep.num_observable_amides) * 100
 
                 # model isotope distribution
                 mpdel_p_D = tools.event_probabilities(model_tp_raw_deut) # deturium isotope distribution
@@ -419,8 +414,7 @@ class GaussianNoiseModelIsotope(object):
 
                 # Calculate a score for each replicate
                 for rep in tp.get_replicates():
-                    replicate_likelihood = self.replicate_score(model=mpdel_full_iso, exp=rep.isotope_envelope, sigma=tp.sigma) 
-
+                    replicate_likelihood = self.replicate_score(model=mpdel_full_iso, exp=rep.isotope_envelope, sigma=tp.sigma)                                 
                     if np.isnan(replicate_likelihood):
                         print(pep.sequence, tp.time, rep.charge_state)
                         print(mpdel_full_iso, rep.isotope_envelope)
@@ -451,4 +445,124 @@ class GaussianNoiseModelIsotope(object):
     def evaluate(self, model, peptides):
         return self.calculate_peptides_score(peptides, model)
 
+
+
+class GaussianNoiseModelIsotopeAvg(object):
+    '''
+    This is a Forward Model.  Actually a Forward Model plus noise model.
+    It converts a model (set of protection factors) into an expected value for each piece of data 
+    and then derives a likelihood for the data:model pair using the noise model.
+
+    This model gathers its standard deviation parameters from the individual timepoint objects.
+    '''
+    def __init__(self, state, truncated=False, bounds=(None, None)):
+        self.truncated=truncated
+
+        self.state = state
+
+        if truncated:
+            # 10 and -10 are numerically equivalent to no truncation factor when
+            # data is in the range of 0-->1
+            if bounds[1] is None:
+                self.upper_bound = 10
+            else:
+                self.upper_bound = bounds[1]
+
+            if bounds[0] is None:
+                self.lower_bound = -10
+            else:
+                self.lower_bound = bounds[0]
+
+    def replicate_score(self, model, exp, sigma):
+        # Forward model
+        #priors = self.model_prior(protection_factor) * self.exp_prior(exp) * self.sigma_prior()
+        #raw_likelihood = math.exp(-(tools.get_mae(model, exp)**2)/(2*sigma**2))/(sigma*math.sqrt(2*numpy.pi))
+        #raw_likelihood = math.exp(-(tools.get_divergence(model, exp, method='KL')**2)/(2*sigma**2))/(sigma*math.sqrt(2*numpy.pi))
+        raw_likelihood = math.exp(-(tools.get_sum_ae(model, exp)**2)/(2*sigma**2))/(sigma*math.sqrt(2*numpy.pi))
+        if self.truncated:
+            raw_likelihood *= 1/ ( 0.5 * ( scipy.special.erf( (self.upper_bound-exp)/sigma * math.sqrt(3.1415) ) - scipy.special.erf( (self.lower_bound-exp)/sigma * math.sqrt(3.1415) ) ) )
+
+        return raw_likelihood
+
+    def peptide_confidence_score(self, peptide):
+        # User-definable function for converting peptide confidence into a likelihood.
+        # The function must be evaluatable between 0 and 1. 
+        pass 
+
+
+    def calculate_peptides_score(self, peptides, protection_factors):
+        '''
+        Will deprecate calculate_dataset_score. Given a list of peptides,
+        calculate the score. Useful for calculating changes that only affect
+        a susbset of peptides.
+        '''
+        self.state.calculate_residue_incorporation(protection_factors)
+        
+        total_score = 0
+        if peptides is None:
+            # peptides are the ones that we recalculate
+            peptides = self.state.get_all_peptides()
+            non_peptides = []
+        else:
+            # non_peptides are the ones where we simply read the score from last time (didn't change)
+            non_peptides = list(set(self.state.get_all_peptides())-set(peptides))
+        #print("PEP:", len(peptides), len(non_peptides))
+        for pep in peptides:
+            peptide_score = 0
+
+            d = pep.get_dataset()
+
+            observable_residues = pep.get_observable_residue_numbers()
+
+            t0_p_D = pep.best_t0_replicate.isotope_envelope # non-deuterated isotope distribution
+
+
+            # Cycle over all timepoints
+            for tp in [tp for tp in pep.get_timepoints() if tp.time != 0]:
+                # initialize tp score to the sigma prior
+                tp_score = 0
+                #model_tp_raw_deut = self.sum_incorporations(self.calculate_residue_incorporation(self.output_model.model_protection_factors)[d], observable_residues, tp.time)
+
+                #try:
+                #    self.state.residue_incorporations[d][0][tp.time]
+                #except:
+
+                model_tp_raw_deut = []
+                for r in observable_residues:
+                    model_tp_raw_deut.append(self.state.residue_incorporations[d][r][tp.time])
+                model_tp_raw_deut = numpy.array(model_tp_raw_deut)
+                
+                # To do: Full-D correction
+                model_tp_raw_deut = model_tp_raw_deut*(pep.max_d/pep.num_observable_amides) * 100
+
+                # model isotope distribution
+                mpdel_p_D = tools.event_probabilities(model_tp_raw_deut) # deturium isotope distribution
+                mpdel_full_iso = np.convolve(mpdel_p_D, t0_p_D) # full heavy isotope distribution
+
+                replicate_likelihood = self.replicate_score(model=mpdel_full_iso, exp=tp.avg_iso_envelope.copy(), sigma=tp.sigma)                                 
+                if np.isnan(replicate_likelihood):
+                    print(tp.peptide.sequence, replicate_likelihood,mpdel_full_iso, tp.avg_iso_envelope, tp.sigma)
+                if replicate_likelihood <= 0:
+                    tp_score =10000000000
+                else:
+                    tp_score = -1*math.log(replicate_likelihood)
+
+                # Set the timepoint score
+                tp.set_score(tp_score)
+
+                peptide_score += tp_score
+
+            total_score += peptide_score
+            #print(pep.sequence, peptide_score, protection_factors)
+
+        for pep in non_peptides:
+            #print(pep.sequence, pep.get_score(), protection_factors)
+            total_score += pep.get_score()
+
+        self.total_score = total_score
+        #print(total_score)
+        return total_score
+
+    def evaluate(self, model, peptides):
+        return self.calculate_peptides_score(peptides, model)
 

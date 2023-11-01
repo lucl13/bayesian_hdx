@@ -62,6 +62,7 @@ class Dataset(object):
         self.peptide_dict = {}
         self.percent_deuterium = percent_deuterium
         self.times = set([tp.time for tp in self.get_all_timepoints()])
+        self.max_D = None
 
     def get_max_rate(self):
         # Returns the theoretical maximum rate for these dataset conditions
@@ -289,7 +290,7 @@ class Dataset(object):
                     rep_dict = {}
 
                     #to avioid circular references
-                    properties_to_exclude = ['timepoint', 'peptide', 'raw_ms', 'isotope_envelope']
+                    properties_to_exclude = ['timepoint', 'peptide', 'raw_ms', 'isotope_envelope', 'sn_ratio']
                     for key, value in rep.__dict__.items():
                         if key not in properties_to_exclude:
                             rep_dict[key] = value
@@ -698,7 +699,16 @@ class Timepoint(object):
 
     def get_score(self):
         return self.score
+    
+    # @property
+    # def avg_iso_envelope(self):
+    #     return tools.get_weighted_avg_iso_envelope(self)
 
+    def calculate_avg_iso_envelope(self):
+        self.avg_iso_envelope = tools.get_weighted_avg_iso_envelope(self)
+        sigma = tools.get_iso_sigma(self)
+        self.set_sigma(sigma)
+    
 
 class SimulatedData(object):
     # Object that defines a simulated system and creates a simulated dataset from that system
@@ -743,7 +753,7 @@ class Replicate(object):
     def load_raw_ms_csv(self, csv_file):
         df = pd.read_csv(csv_file, names=['m/z', 'Intensity'])
         # normalize intensity to sum to 1
-        df['Intensity'] = df['Intensity'] / df['Intensity'].sum()
+        #df['Intensity'] = df['Intensity'] / df['Intensity'].sum()
         self.raw_ms = df
         iso = tools.get_isotope_envelope(self)
         if iso is not None:

@@ -89,6 +89,7 @@ def import_HXcolumns(infile, sequence, name="Data", percentD=False, conditions=N
         deut = float(fields[column_headers.index("D_inc")])
         #print("-----", start_res, column_headers.index("start_res"), offset, line)
         charge_state = int(fields[column_headers.index("charge_state")])
+        max_d = float(fields[column_headers.index("max_D")])
         if not percentD:
             deut = deut / tools.calculate_number_of_observable_amides(sequence, n_fastamides) * 100
 
@@ -101,13 +102,14 @@ def import_HXcolumns(infile, sequence, name="Data", percentD=False, conditions=N
 
         #new_peptide = dataset.create_peptide(sequence, start_res, charge_state=charge_state)
         new_peptide = dataset.create_peptide(sequence, start_res,)
+        new_peptide.max_d = max_d
 
         if new_peptide is not None:
             # If the time is 0.0, that's weird.  Ignore that.
             #if time==0.0:
             #    continue
 
-            if deut < 105:  # XXX Hard coded cap on %D value.  Not ideal.
+            if deut < 120:  # XXX Hard coded cap on %D value.  Not ideal.
                 new_timepoint=True
 
                 # If timepoint is already in fragment, grab that timepoint

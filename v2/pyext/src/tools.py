@@ -416,16 +416,52 @@ import pandas as pd
 import numpy as np
 
 
-def get_isotope_envelope(replicate):
+
+def ms_smoothing(spectrum):
+    exp = oms.MSExperiment()
+    gf = oms.GaussFilter()
+    param = gf.getParameters()
+    param.setValue("gaussian_width", 0.001)  # Adjust the width as needed
+    gf.setParameters(param)
+
+    exp.addSpectrum(spectrum)
+    gf.filterExperiment(exp)
+    spectrum = exp[0]  # Get back the modified spectrum
+
+    return spectrum
+
+
+def calculate_SN(spectrum: oms.MSSpectrum, mz_value: float, window: float = 1.0):
+    # Extract peaks
+    mz, intensity = spectrum.get_peaks()
+    
+    # Find the peak intensity at the mz_value
+    peak_intensity = intensity[np.abs(mz - mz_value) < window].max()
+
+    # Estimate the noise level as the mean intensity in the window
+    noise_level = np.mean(intensity[np.abs(mz - mz_value) < window])
+    
+    # Calculate the signal-to-noise ratio
+    sn_ratio = peak_intensity / noise_level
+    
+    return sn_ratio
+
+
+def get_isotope_envelope(replicate, add_sn_ratio_to_peptide=True):
     #print(f'{replicate.peptide.sequence} {replicate.timepoint.time} {replicate.charge_state}')
-    # Step 1: Centroiding
+    
+    # Step 1: create the spectrum object
     seq = oms.AASequence.fromString(replicate.peptide.sequence) 
     mfull = seq.getMonoWeight()
     mz_values = replicate.raw_ms['m/z'].values - mfull/float(replicate.charge_state)
     intensities = replicate.raw_ms['Intensity'].values 
-
     spectrum = oms.MSSpectrum()
     spectrum.set_peaks((mz_values, intensities))
+
+    # Step 2: smoothing 
+    spectrum = ms_smoothing(spectrum)
+
+    # Step 3: Centroiding
     picker = oms.PeakPickerHiRes()
     picked_spectrum = oms.MSSpectrum()
     picker.pick(spectrum, picked_spectrum)
@@ -433,7 +469,7 @@ def get_isotope_envelope(replicate):
     mz_picked, intensity_picked = picked_spectrum.get_peaks()
     df_picked = pd.DataFrame({'m/z': mz_picked, 'Intensity': intensity_picked})
 
-    # if bad drop replicate
+    # # if bad drop replicate
     if df_picked.empty:
         replicate.timepoint.replicates.remove(replicate)
         print(f'bad replicate droped: {replicate.peptide.sequence} {replicate.timepoint.time} {replicate.charge_state}')
@@ -444,6 +480,7 @@ def get_isotope_envelope(replicate):
     max_mz = int(df_picked['m/z'].max())
     selected_mz = []
     selected_intensity = []
+    sn_ratio = []
     
     for mz_int in range(max_mz+1):
         mask = (df_picked['m/z'] >= mz_int-0.1) & (df_picked['m/z'] <= mz_int+0.1)
@@ -453,10 +490,13 @@ def get_isotope_envelope(replicate):
             max_peak = peaks_in_range.loc[peaks_in_range['Intensity'].idxmax()]
             selected_mz.append(max_peak['m/z'])
             selected_intensity.append(max_peak['Intensity'])
-            
+            #print(max_peak)
+            sn_ratio.append(calculate_SN(spectrum, max_peak['m/z']))
+
     selected_df = pd.DataFrame({
         'm/z': selected_mz,
-        'Intensity': selected_intensity / np.sum(selected_intensity)  # Normalizing intensity
+        'Intensity': selected_intensity / np.sum(selected_intensity),  # Normalizing intensity
+        'sn_ratio': sn_ratio
     })
 
     # round m/z to integer
@@ -464,14 +504,17 @@ def get_isotope_envelope(replicate):
 
     # if bad drop replicate
     if selected_df.empty:
-        replicate.timepoint.replicates.remove(replicate)
-        print(f'bad replicate droped: {replicate.peptide.sequence} {replicate.timepoint.time} {replicate.charge_state}')
-        return None
+       replicate.timepoint.replicates.remove(replicate)
+       print(f'bad replicate droped: {replicate.peptide.sequence} {replicate.timepoint.time} {replicate.charge_state}')
+       return None
 
     # if no zero peak, add one
     if 0 not in selected_df['m/z'].values:
         df_0 = pd.DataFrame({'m/z': [0], 'Intensity': [0]})
         selected_df = pd.concat([df_0, selected_df], ignore_index=True).reset_index(drop=True)
+
+    if add_sn_ratio_to_peptide:
+        replicate.sn_ratio = selected_df['sn_ratio'].mean()
 
     return selected_df
 
@@ -499,6 +542,49 @@ def get_theoretical_isotope_distribution(replicate):
     return df_theo
 
 
+def refine_dataset(dataset):
+
+    # step1: remove all the replicates that have very weak signal
+    print('removing weak signal replicates')
+    for pep in dataset.peptides:
+        for tp in pep.timepoints:
+            for rep in tp.replicates:
+
+                # low signal
+                if rep.raw_ms['Intensity'].max() < 1e3:
+                    tp.replicates.remove(rep)
+                    print(f'{pep.sequence} {tp.time} {rep.charge_state} removed')
+
+
+    # step 1.5: remove all the replicates with low sn ratio
+    print('removing low sn ratio replicates')
+    for pep in dataset.peptides:
+        for tp in pep.timepoints:
+            for rep in tp.replicates:
+                if rep.sn_ratio < 15:
+                    tp.replicates.remove(rep)
+                    print(f'{pep.sequence} {tp.time} {rep.charge_state} removed')
+                    
+                    if tp.replicates == []:
+                        pep.timepoints.remove(tp)
+                        print(f'{pep.sequence} {tp.time} removed')
+    
+
+    # step2: calculate the average intensity for each timepoint
+    for pep in dataset.peptides:
+        pep.get_best_charge_state()
+
+    
+    for tp in dataset.get_all_timepoints():
+        try:
+            tp.calculate_avg_iso_envelope()
+            tp.avg_iso_envelope
+        except:
+            print(tp.peptide.sequence, tp.time)
+            raise ValueError('cannot calculate average iso envelope')
+
+    return dataset
+
 
 def set_t0_rep_score(dataset):
     '''
@@ -513,6 +599,38 @@ def set_t0_rep_score(dataset):
         t0_rep.set_score(divergence)
 
     print("Set score for %d t0 replicates" % len(t0_reps))
+
+
+def get_weighted_avg_iso_envelope(timepoint):
+    reps = timepoint.replicates
+    
+    weights = np.array([rep.raw_ms['Intensity'][rep.raw_ms['Intensity'] > 1e3].mean() for rep in reps])
+    weights /= weights.sum()
+    
+    max_len = max(len(rep.isotope_envelope) for rep in reps)
+    
+    iso_envelopes = []
+    for rep in reps:
+        padded_envelope = custom_pad(rep.isotope_envelope, max_len)
+        iso_envelopes.append(padded_envelope)
+    
+    iso_envelopes = np.array(iso_envelopes)
+    
+    weighted_average_envelope = np.average(iso_envelopes, axis=0, weights=weights)
+    weighted_average_envelope /= weighted_average_envelope.sum()
+    
+    return weighted_average_envelope
+
+import itertools
+
+def get_iso_sigma(timepoint):
+    reps = timepoint.replicates
+    if len(reps) == 1:
+        return 0.5
+    rep_combinations = list(itertools.combinations(reps, 2))
+    abs_error =  np.average([get_sum_ae(com[0].isotope_envelope, com[1].isotope_envelope) for com in rep_combinations])
+
+    return abs_error
 
 
 from numba import njit
@@ -583,6 +701,12 @@ def get_mae(p, q):
     
     return np.mean(np.abs(x1 - x2))
 
+
+@njit
+def get_sum_ae(p, q):
+
+    x1, x2 = norm_pad_two_arrays(p, q)
+    return np.abs(x1 - x2).sum()
 
 @njit
 def event_probabilities(p_array):
