@@ -54,48 +54,26 @@ def find_low_intensity_reps(replicates_list, threshold=10):
 
 def refine_large_error_reps(dataset):
 
-    flat_large_error_list = flat_repo_list(get_large_error_reps(dataset, threshold=1.5))
+    while True:
+        flat_large_error_list = flat_repo_list(get_large_error_reps(dataset, threshold=1.5))
 
-    for rep in flat_large_error_list:
-        try:
-            tools.filter_by_thoe_ms(rep)
-        except:
-            print(rep.peptide.sequence, rep.timepoint.time,)
+        for rep in flat_large_error_list:
+            try:
+                tools.filter_by_thoe_ms(rep)
+            except:
+                print(rep.peptide.sequence, rep.timepoint.time,)
 
-    flat_large_error_list = flat_repo_list(get_large_error_reps(dataset, threshold=1.5))
-    remove_reps_from_dataset(flat_large_error_list, dataset)
+        flat_large_error_list = flat_repo_list(get_large_error_reps(dataset, threshold=1.5))
+        if flat_large_error_list == []:
+            break
+        tools.remove_reps_from_dataset(flat_large_error_list, dataset)
 
-    flat_large_error_list = get_large_error_reps(dataset, threshold=1.2)
-    low_intens_reps = find_low_intensity_reps(flat_large_error_list, threshold=5)
-    remove_reps_from_dataset(low_intens_reps, dataset)
+        flat_large_error_list = get_large_error_reps(dataset, threshold=1.2)
+        low_intens_reps = find_low_intensity_reps(flat_large_error_list, threshold=5)
+        tools.remove_reps_from_dataset(low_intens_reps, dataset)
 
 
     
-def remove_reps_from_dataset(removing_reps, dataset):
 
-    # remove the replicates from the dataset
-    for pep in dataset.peptides:
-        for tp in pep.timepoints:
-            for rep in tp.replicates:
-                if rep in removing_reps:
-                    tp.replicates.remove(rep)
-                    print(f'{rep} removed')
-        
-                            
-            # Remove timepoints without replicates
-            if tp.replicates == []:
-                pep.timepoints.remove(tp)
-                print(f'{pep.sequence} {tp.time} removed')
-                
-        # Remove peptides without timepoints or with no time 0
-        if pep.timepoints == []:
-            dataset.peptides.remove(pep)
-            print(f'{pep.sequence} removed')
-
-    for pep in dataset.peptides:
-        tp0_reps = [rep for tp in pep.timepoints for rep in tp.replicates if rep.timepoint.time == 0 ]
-        if len(tp0_reps) == 0:
-            dataset.peptides.remove(pep)
-            print(f'{pep.sequence} removed')
 
     

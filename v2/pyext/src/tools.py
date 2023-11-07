@@ -431,7 +431,7 @@ def ms_smoothing(spectrum):
     return spectrum
 
 
-def calculate_SN(spectrum: oms.MSSpectrum, mz_value: float, window: float = 1.0):
+def calculate_SN(spectrum: oms.MSSpectrum, mz_value: float, window: float = 1.5):
     # Extract peaks
     mz, intensity = spectrum.get_peaks()
     
@@ -445,6 +445,23 @@ def calculate_SN(spectrum: oms.MSSpectrum, mz_value: float, window: float = 1.0)
     sn_ratio = peak_intensity / noise_level
     
     return sn_ratio
+
+
+from sklearn.covariance import EllipticEnvelope
+
+
+def convolute_deuterated_distribution(non_deuterated, centroid_deuteration, sigma=1):
+
+    # Creating a Gaussian distribution
+    x = np.arange(len(non_deuterated) + centroid_deuteration)
+    gaussian = np.exp(-(x - centroid_deuteration)**2 / (2 * sigma**2))
+    gaussian /= np.sum(gaussian)
+    
+    # Convolving the non-deuterated distribution with the Gaussian
+    convoluted = np.convolve(non_deuterated, gaussian,)
+
+    
+    return convoluted
 
 
 def get_isotope_envelope(replicate, add_sn_ratio_to_peptide=True):
@@ -469,10 +486,14 @@ def get_isotope_envelope(replicate, add_sn_ratio_to_peptide=True):
     mz_picked, intensity_picked = picked_spectrum.get_peaks()
     df_picked = pd.DataFrame({'m/z': mz_picked, 'Intensity': intensity_picked})
 
+    # set the impossible peaks to 1e-10
+    max_peak_num = np.sum(get_theoretical_isotope_distribution(replicate)['Intensity'] > 0.01) + replicate.peptide.num_observable_amides
+    df_picked = df_picked[df_picked['m/z'] <= max_peak_num]
+
     # # if bad drop replicate
     if df_picked.empty:
-        replicate.timepoint.replicates.remove(replicate)
-        print(f'bad replicate droped: {replicate.peptide.sequence} {replicate.timepoint.time} {replicate.charge_state}')
+        #replicate.timepoint.replicates.remove(replicate)
+        #print(f'bad replicate droped: {replicate.peptide.sequence} {replicate.timepoint.time} {replicate.charge_state}')
         return None
 
     
@@ -495,7 +516,7 @@ def get_isotope_envelope(replicate, add_sn_ratio_to_peptide=True):
 
     selected_df = pd.DataFrame({
         'm/z': selected_mz,
-        'Intensity': selected_intensity / np.sum(selected_intensity),  # Normalizing intensity
+        'Intensity': selected_intensity,
         'sn_ratio': sn_ratio
     })
 
@@ -504,8 +525,8 @@ def get_isotope_envelope(replicate, add_sn_ratio_to_peptide=True):
 
     # if bad drop replicate
     if selected_df.empty:
-       replicate.timepoint.replicates.remove(replicate)
-       print(f'bad replicate droped: {replicate.peptide.sequence} {replicate.timepoint.time} {replicate.charge_state}')
+       #replicate.timepoint.replicates.remove(replicate)
+       #print(f'bad replicate droped: {replicate.peptide.sequence} {replicate.timepoint.time} {replicate.charge_state}')
        return None
 
     # if no zero peak, add one
@@ -516,12 +537,43 @@ def get_isotope_envelope(replicate, add_sn_ratio_to_peptide=True):
     if add_sn_ratio_to_peptide:
         replicate.sn_ratio = selected_df['sn_ratio'].mean()
 
+    selected_df['Intensity'] /= selected_df['Intensity'].sum()
+
     return selected_df
+
+def filter_by_thoe_ms(replicate, add_avg_intensity=True):
+
+    experimental_peaks = replicate.isotope_envelope.reshape(-1, 1)
+    
+    theoretical_peaks = convolute_deuterated_distribution(replicate.peptide.best_t0_replicate.isotope_envelope, replicate.deut*replicate.max_d/100)
+    theoretical_peaks = theoretical_peaks.reshape(-1, 1)
+
+    # # Fit the EllipticEnvelope to the theoretical data
+    envelope = EllipticEnvelope(contamination=0.05)  # adjust contamination appropriately
+    envelope.fit(theoretical_peaks)
+
+    # # Predict the outliers in the experimental data
+    experimental_outliers = envelope.predict(experimental_peaks)
+    is_inlier = (experimental_outliers == 1)
+    
+
+    # replace the outlier with 1e-10
+
+    replicate.isotope_envelope[~is_inlier] = 1e-10
+    replicate.isotope_envelope /= replicate.isotope_envelope.sum()
+
+    # print num
+    #num_outliers = (~is_inlier).sum()
+    #print(f'{num_outliers} outliers removed')
+
 
 
 from pyopenms import AASequence, CoarseIsotopePatternGenerator
 
 def get_theoretical_isotope_distribution(replicate):
+    """
+    return the mono charge state iso
+    """    
     # Create an AASequence object from the peptide sequence
     peptide_obj = AASequence.fromString(replicate.peptide.sequence)
 
@@ -531,10 +583,10 @@ def get_theoretical_isotope_distribution(replicate):
     isotope_distribution = isotope_generator.run(formula)
 
     # Get the monoisotopic mass
-    mono_mz = peptide_obj.getMonoWeight() / replicate.charge_state
+    mono_mz = peptide_obj.getMonoWeight() 
 
     # Adjust the m/z values relative to the monoisotopic mass and considering the charge state
-    theo_mz = np.array([(iso.getMZ() / replicate.charge_state) - mono_mz for iso in isotope_distribution.getContainer()])
+    theo_mz = np.array([(iso.getMZ()) - mono_mz for iso in isotope_distribution.getContainer()])
     theo_intensity = np.array([iso.getIntensity() for iso in isotope_distribution.getContainer()])
 
     #plt.stem(theo_mz, theo_intensity, linefmt='-', markerfmt=' ', basefmt=" ",)
@@ -543,47 +595,51 @@ def get_theoretical_isotope_distribution(replicate):
 
 
 def refine_dataset(dataset):
+    print('num of tps before refining: ', len(dataset.get_all_timepoints()))
 
-    # step1: remove all the replicates that have very weak signal
-    print('removing weak signal replicates')
+    print('Refining dataset...')
     for pep in dataset.peptides:
         for tp in pep.timepoints:
-            for rep in tp.replicates:
+            tp.replicates = [rep for rep in tp.replicates if 
+                             rep.raw_ms['Intensity'].max() >= 1e4 and
+                             rep.sn_ratio >= 30 and
+                             rep.max_d/rep.peptide.num_observable_amides >= 0.5]
+                
+            # Remove timepoints without replicates
+            if tp.replicates == []:
+                pep.timepoints.remove(tp)
+                print(f'{pep.sequence} {tp.time} removed')
+                
+        # Remove peptides without timepoints or with no time 0
+        if pep.timepoints == []:
+            dataset.peptides.remove(pep)
+            print(f'{pep.sequence} removed')
 
-                # low signal
-                if rep.raw_ms['Intensity'].max() < 1e3:
-                    tp.replicates.remove(rep)
-                    print(f'{pep.sequence} {tp.time} {rep.charge_state} removed')
 
-
-    # step 1.5: remove all the replicates with low sn ratio
-    print('removing low sn ratio replicates')
     for pep in dataset.peptides:
-        for tp in pep.timepoints:
-            for rep in tp.replicates:
-                if rep.sn_ratio < 15:
-                    tp.replicates.remove(rep)
-                    print(f'{pep.sequence} {tp.time} {rep.charge_state} removed')
-                    
-                    if tp.replicates == []:
-                        pep.timepoints.remove(tp)
-                        print(f'{pep.sequence} {tp.time} removed')
-    
+        tp0_reps = [rep for tp in pep.timepoints for rep in tp.replicates if rep.timepoint.time == 0 ]
+        if len(tp0_reps) == 0:
+            dataset.peptides.remove(pep)
+            print(f'{pep.sequence} removed')
+
+    print('num of tps after refining: ', len(dataset.get_all_timepoints()))
+
 
     # step2: calculate the average intensity for each timepoint
     for pep in dataset.peptides:
         pep.get_best_charge_state()
 
-    
     for tp in dataset.get_all_timepoints():
         try:
             tp.calculate_avg_iso_envelope()
-            tp.avg_iso_envelope
         except:
             print(tp.peptide.sequence, tp.time)
             raise ValueError('cannot calculate average iso envelope')
+            
 
     return dataset
+
+
 
 
 def set_t0_rep_score(dataset):
@@ -593,7 +649,7 @@ def set_t0_rep_score(dataset):
     '''
     t0_reps = [rep for pep in dataset.peptides for tp in pep.timepoints for rep in tp.replicates if rep.timepoint.time == 0 ]
     for t0_rep in t0_reps:
-        divergence = get_divergence(get_isotope_envelope(t0_rep)['Intensity'].values,
+        divergence = get_divergence(t0_rep.isotope_envelope,
                                     get_theoretical_isotope_distribution(t0_rep)['Intensity'].values,
                                     method='JS')
         t0_rep.set_score(divergence)
@@ -626,11 +682,12 @@ import itertools
 def get_iso_sigma(timepoint):
     reps = timepoint.replicates
     if len(reps) == 1:
-        return 0.5
+        return 0.1
     rep_combinations = list(itertools.combinations(reps, 2))
-    abs_error =  np.average([get_sum_ae(com[0].isotope_envelope, com[1].isotope_envelope) for com in rep_combinations])
+    #error =  np.average([get_sum_ae(com[0].isotope_envelope, com[1].isotope_envelope) for com in rep_combinations])
+    error =  np.average([get_divergence(com[0].isotope_envelope, com[1].isotope_envelope, method='JS') for com in rep_combinations])
 
-    return abs_error
+    return error
 
 
 from numba import njit
@@ -728,3 +785,31 @@ def event_probabilities(p_array):
     probabilities = dp[n]
     
     return probabilities
+
+
+def remove_reps_from_dataset(removing_reps, dataset):
+
+    # remove the replicates from the dataset
+    for pep in dataset.peptides:
+        for tp in pep.timepoints:
+            for rep in tp.replicates:
+                if rep in removing_reps:
+                    tp.replicates.remove(rep)
+                    #print(f'{rep} removed')
+        
+                            
+            # Remove timepoints without replicates
+            if tp.replicates == []:
+                pep.timepoints.remove(tp)
+                print(f'{pep.sequence} {tp.time} removed')
+                
+        # Remove peptides without timepoints or with no time 0
+        if pep.timepoints == []:
+            dataset.peptides.remove(pep)
+            print(f'{pep.sequence} removed')
+
+    for pep in dataset.peptides:
+        tp0_reps = [rep for tp in pep.timepoints for rep in tp.replicates if rep.timepoint.time == 0 ]
+        if len(tp0_reps) == 0:
+            dataset.peptides.remove(pep)
+            print(f'{pep.sequence} removed')

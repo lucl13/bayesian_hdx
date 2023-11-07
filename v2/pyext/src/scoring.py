@@ -348,12 +348,15 @@ class GaussianNoiseModelIsotope(object):
 
     def replicate_score(self, model, exp, sigma):
         # Forward model
-        #priors = self.model_prior(protection_factor) * self.exp_prior(exp) * self.sigma_prior()
-        #raw_likelihood = math.exp(-(tools.get_mae(model, exp)**2)/(2*sigma**2))/(sigma*math.sqrt(2*numpy.pi))
-        #raw_likelihood = math.exp(-(tools.get_divergence(model, exp, method='KL')**2)/(2*sigma**2))/(sigma*math.sqrt(2*numpy.pi))
-        raw_likelihood = math.exp(-(tools.get_sum_ae(model, exp)**2)/(2*sigma**2))/(sigma*math.sqrt(2*numpy.pi))
-        if self.truncated:
-            raw_likelihood *= 1/ ( 0.5 * ( scipy.special.erf( (self.upper_bound-exp)/sigma * math.sqrt(3.1415) ) - scipy.special.erf( (self.lower_bound-exp)/sigma * math.sqrt(3.1415) ) ) )
+        if np.sum(model<0) > 0:
+           raw_likelihood = math.exp(-(tools.get_sum_ae(model, exp)**2)/(2*sigma**2))/(sigma*math.sqrt(2*numpy.pi))
+           return raw_likelihood
+        else:
+            raw_likelihood = math.exp(-(tools.get_divergence(model, exp, method='JS')**2)/(2*sigma**2))/(sigma*math.sqrt(2*numpy.pi))
+        
+        #raw_likelihood = math.exp(-((tools.get_sum_ae(model, exp))**2)/(2*sigma**2))/(sigma*math.sqrt(2*numpy.pi))
+            if self.truncated:
+                raw_likelihood *= 1/ ( 0.5 * ( scipy.special.erf( (self.upper_bound-exp)/sigma * math.sqrt(3.1415) ) - scipy.special.erf( (self.lower_bound-exp)/sigma * math.sqrt(3.1415) ) ) )
 
         return raw_likelihood
 
@@ -414,7 +417,7 @@ class GaussianNoiseModelIsotope(object):
 
                 # Calculate a score for each replicate
                 for rep in tp.get_replicates():
-                    replicate_likelihood = self.replicate_score(model=mpdel_full_iso, exp=rep.isotope_envelope, sigma=tp.sigma)                                 
+                    replicate_likelihood = self.replicate_score(model=mpdel_full_iso, exp=rep.isotope_envelope, sigma=0.3)                                 
                     if np.isnan(replicate_likelihood):
                         print(pep.sequence, tp.time, rep.charge_state)
                         print(mpdel_full_iso, rep.isotope_envelope)

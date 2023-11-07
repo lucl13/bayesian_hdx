@@ -290,7 +290,7 @@ class Dataset(object):
                     rep_dict = {}
 
                     #to avioid circular references
-                    properties_to_exclude = ['timepoint', 'peptide', 'raw_ms', 'isotope_envelope', 'sn_ratio']
+                    properties_to_exclude = ['timepoint', 'peptide', 'raw_ms', 'isotope_envelope', 'sn_ratio', 'max_d']
                     for key, value in rep.__dict__.items():
                         if key not in properties_to_exclude:
                             rep_dict[key] = value
@@ -620,8 +620,12 @@ class Timepoint(object):
     def number_of_replicates(self):
         return len(self.replicates)
 
-    def add_replicate(self, deut, experiment_id=None, score=1.0, rt=None, charge_state=None):
-        self.replicates.append(Replicate(deut, experiment_id=experiment_id, reliability=score, rt=rt, charge_state=charge_state,
+    def add_replicate(self, deut, experiment_id=None, score=1.0, rt=None, charge_state=None, max_d=None):
+        if max_d is not None:
+            self.replicates.append(Replicate(deut, experiment_id=experiment_id, reliability=score, rt=rt, charge_state=charge_state,
+                                         timepoint=self, peptide=self.peptide, max_d=max_d))
+        else:
+            self.replicates.append(Replicate(deut, experiment_id=experiment_id, reliability=score, rt=rt, charge_state=charge_state,
                                          timepoint=self, peptide=self.peptide))
 
     def get_avg_sd(self):
@@ -729,7 +733,7 @@ class Replicate(object):
         @param rid - the deuterium concentration
         @param recovery - the 2D recovery estimate
     """
-    def __init__(self, deut, experiment_id, reliability=1.0, rt=None, charge_state=None, timepoint=None, peptide=None):
+    def __init__(self, deut, experiment_id, reliability=1.0, rt=None, charge_state=None, timepoint=None, peptide=None, max_d=None):
         self.deut = deut
         self.experiment_id = experiment_id
         self.reliability = reliability
@@ -737,6 +741,10 @@ class Replicate(object):
         self.charge_state = charge_state
         self.timepoint = timepoint 
         self.peptide = peptide
+        if max_d is None:
+            self.max_d = max_d
+        else:
+            self.max_d = self.peptide.max_d
 
     def set_score(self, score):
         self.score = score
@@ -758,4 +766,46 @@ class Replicate(object):
         iso = tools.get_isotope_envelope(self)
         if iso is not None:
             self.isotope_envelope = iso['Intensity'].values
-            
+        else:
+            self.isotope_envelope = None
+
+    # def raw_ms_to_isotope_envelope(self):
+    #     self.isotope_envelope = tools.refine_raw_iso(self)
+
+
+
+
+def merge_mutiple_datasets(datasets_list):
+
+    names = [dataset.name for dataset in datasets_list]
+    if len(set(names)) != 1:
+        raise ValueError("Datasets must have the same name")
+    
+
+    merged_datasets = Dataset(name=datasets_list[0].name, sequence=datasets_list[0].sequence, conditions=Conditions())
+
+    for dataset in datasets_list:
+        for pep in dataset.peptides:
+
+            new_peptide = merged_datasets.create_peptide(pep.sequence, pep.start_residue,)
+            new_peptide.max_d = pep.max_d
+
+            if new_peptide is not None:
+
+                for tp in pep.get_timepoints():
+
+                    # If timepoint is already in fragment, grab that timepoint
+                    if tp.time in [tp.time for tp in new_peptide.get_timepoints()]:
+                        tp_obj = new_peptide.get_timepoint_by_time(tp.time)
+                    #If not, add a new timepoint at this time.  What to put for sigma??
+                    else:
+                        tp_obj = new_peptide.add_timepoint(tp.time)
+
+                    for rep in tp.get_replicates():
+                        tp_obj.replicates.append(rep)
+                        
+
+    merged_datasets.calculate_observable_rate_bounds()
+    merged_datasets.calculate_observable_protection_factors()
+    
+    return merged_datasets

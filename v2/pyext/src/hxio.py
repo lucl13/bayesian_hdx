@@ -11,6 +11,7 @@ import tools
 from itertools import groupby
 from glob import glob
 import pandas as pd
+from tqdm import tqdm
 
 
 
@@ -121,8 +122,8 @@ def import_HXcolumns(infile, sequence, name="Data", percentD=False, conditions=N
      
                 # add the deuteration value as a replicate.
                 # Any other replicate information from the file should be added at this step.
-                tp.add_replicate(deut, score=score,charge_state=charge_state)
-
+                tp.add_replicate(deut, score=score,charge_state=charge_state, max_d=max_d)
+                
             new_peptide.add_timepoint(time)
 
     dataset.calculate_observable_rate_bounds()
@@ -347,19 +348,25 @@ def load_raw_ms_to_hdxms_data(dataset:Dataset, raw_spectra_path):
         pep_idf = f'{start}-{end} {seq}'
         path_dict[pep_idf] = folder
 
-
-    for pep in dataset.get_peptides():
+    bad_replicates = []
+    for pep in tqdm(dataset.get_peptides()):
         pep_idf = f'{pep.start_residue}-{pep.end_residue} {pep.sequence}'
         pep_sub_folder =  path_dict[pep_idf]
 
         for tp in pep.timepoints:
-            for rep in tp.get_replicates():
-                if tp.time == 0:
+            for rep in tp.replicates:
+                if tp.time == 0.0:
                     csv_name = f'Non-D-1-z{rep.charge_state}.csv'
                 else:
                     csv_name = f'{int(tp.time)}s-1-z{rep.charge_state}.csv'
                 csv_file_path = os.path.join(pep_sub_folder, csv_name)
                 rep.load_raw_ms_csv(csv_file_path)
+
+                if rep.isotope_envelope is None:
+                    bad_replicates.append(rep)
+
+    #drop bad replicates
+    tools.remove_reps_from_dataset(bad_replicates, dataset)
 
     print('Done loading raw MS data.')
 
