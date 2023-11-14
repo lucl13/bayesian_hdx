@@ -347,16 +347,17 @@ class GaussianNoiseModelIsotope(object):
                 self.lower_bound = bounds[0]
 
     def replicate_score(self, model, exp, sigma):
-        # Forward model
+        #Forward model
         if np.sum(model<0) > 0:
            raw_likelihood = math.exp(-(tools.get_sum_ae(model, exp)**2)/(2*sigma**2))/(sigma*math.sqrt(2*numpy.pi))
-           return raw_likelihood
+           
         else:
             raw_likelihood = math.exp(-(tools.get_divergence(model, exp, method='JS')**2)/(2*sigma**2))/(sigma*math.sqrt(2*numpy.pi))
         
-        #raw_likelihood = math.exp(-((tools.get_sum_ae(model, exp))**2)/(2*sigma**2))/(sigma*math.sqrt(2*numpy.pi))
-            if self.truncated:
-                raw_likelihood *= 1/ ( 0.5 * ( scipy.special.erf( (self.upper_bound-exp)/sigma * math.sqrt(3.1415) ) - scipy.special.erf( (self.lower_bound-exp)/sigma * math.sqrt(3.1415) ) ) )
+        #raw_likelihood = math.exp(-(tools.get_sum_ae(model, exp)**2)/(2*sigma**2))/(sigma*math.sqrt(2*numpy.pi))
+    
+        if self.truncated:
+            raw_likelihood *= 1/ ( 0.5 * ( scipy.special.erf( (self.upper_bound-exp)/sigma * math.sqrt(3.1415) ) - scipy.special.erf( (self.lower_bound-exp)/sigma * math.sqrt(3.1415) ) ) )
 
         return raw_likelihood
 
@@ -409,7 +410,7 @@ class GaussianNoiseModelIsotope(object):
                 model_tp_raw_deut = numpy.array(model_tp_raw_deut)
                 
                 # To do: Full-D correction
-                model_tp_raw_deut = model_tp_raw_deut*(pep.max_d/pep.num_observable_amides) * 100
+                model_tp_raw_deut = model_tp_raw_deut*(pep.max_d/pep.num_observable_amides)  # 0-1, not 0-100 % 
 
                 # model isotope distribution
                 mpdel_p_D = tools.event_probabilities(model_tp_raw_deut) # deturium isotope distribution

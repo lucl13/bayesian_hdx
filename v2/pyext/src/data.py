@@ -709,7 +709,7 @@ class Timepoint(object):
     #     return tools.get_weighted_avg_iso_envelope(self)
 
     def calculate_avg_iso_envelope(self):
-        self.avg_iso_envelope = tools.get_weighted_avg_iso_envelope(self)
+        #self.avg_iso_envelope = tools.get_weighted_avg_iso_envelope(self)
         sigma = tools.get_iso_sigma(self)
         self.set_sigma(sigma)
     

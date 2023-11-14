@@ -12,6 +12,7 @@ from itertools import groupby
 from glob import glob
 import pandas as pd
 from tqdm import tqdm
+import numpy as np
 
 
 
@@ -89,7 +90,10 @@ def import_HXcolumns(infile, sequence, name="Data", percentD=False, conditions=N
         time = float(fields[column_headers.index("time")])
         deut = float(fields[column_headers.index("D_inc")])
         #print("-----", start_res, column_headers.index("start_res"), offset, line)
-        charge_state = int(fields[column_headers.index("charge_state")])
+        if fields[column_headers.index("charge_state")] == "None":
+            charge_state = None
+        else:
+            charge_state = int(fields[column_headers.index("charge_state")])
         max_d = float(fields[column_headers.index("max_D")])
         if not percentD:
             deut = deut / tools.calculate_number_of_observable_amides(sequence, n_fastamides) * 100
@@ -369,6 +373,33 @@ def load_raw_ms_to_hdxms_data(dataset:Dataset, raw_spectra_path):
     tools.remove_reps_from_dataset(bad_replicates, dataset)
 
     print('Done loading raw MS data.')
+
+
+def load_raw_ms_from_pegion(dataset:Dataset, raw_spectra_path):
+    '''
+    Load raw MS data from npy files from PEGION to Dataset object. 
+    '''
+
+    all_reps = [rep for pep in dataset.peptides for tp in pep.timepoints for rep in tp.replicates]
+
+    for rep in tqdm(all_reps):
+        state = rep.peptide.get_dataset().name
+        idf = f'{rep.peptide.start_residue}-{rep.peptide.end_residue}-{rep.peptide.sequence}'
+
+        npy_file_name = f'{state}_{idf}_tp{int(rep.timepoint.time)}_ch{rep.charge_state}.npy'
+        rep.isotope_envelope = np.load(os.path.join(raw_spectra_path, npy_file_name))
+
+
+    bad_replicates = [rep for rep in all_reps if rep.isotope_envelope is None]
+
+    #drop bad replicates
+    tools.remove_reps_from_dataset(bad_replicates, dataset)
+    print(f'Dropped {len(bad_replicates)} bad replicates.')
+
+    print('Done loading raw MS data.')
+
+    tools.set_t0_rep_score(dataset)
+    tools.refine_dataset(dataset)
 
 
 class HDXWorkbench(object):

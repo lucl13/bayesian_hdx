@@ -595,46 +595,51 @@ def get_theoretical_isotope_distribution(replicate):
 
 
 def refine_dataset(dataset):
-    print('num of tps before refining: ', len(dataset.get_all_timepoints()))
+    print('num of tps: ', len(dataset.get_all_timepoints()))
+    print('num of reps: ', len([rep for tp in dataset.get_all_timepoints() for rep in tp.replicates]))
 
-    print('Refining dataset...')
-    for pep in dataset.peptides:
-        for tp in pep.timepoints:
-            tp.replicates = [rep for rep in tp.replicates if 
-                             rep.raw_ms['Intensity'].max() >= 1e4 and
-                             rep.sn_ratio >= 30 and
-                             rep.max_d/rep.peptide.num_observable_amides >= 0.5]
+    # print('Refining dataset...')
+    # for pep in dataset.peptides:
+    #     for tp in pep.timepoints:
+    #         tp.replicates = [rep for rep in tp.replicates if 
+    #                          rep.raw_ms['Intensity'].max() >= 1e4 and
+    #                          rep.sn_ratio >= 30 and
+    #                          rep.max_d/rep.peptide.num_observable_amides >= 0.5]
                 
-            # Remove timepoints without replicates
-            if tp.replicates == []:
-                pep.timepoints.remove(tp)
-                print(f'{pep.sequence} {tp.time} removed')
+    #         # Remove timepoints without replicates
+    #         if tp.replicates == []:
+    #             pep.timepoints.remove(tp)
+    #             print(f'{pep.sequence} {tp.time} removed')
                 
-        # Remove peptides without timepoints or with no time 0
-        if pep.timepoints == []:
-            dataset.peptides.remove(pep)
-            print(f'{pep.sequence} removed')
+    #     # Remove peptides without timepoints or with no time 0
+    #     if pep.timepoints == []:
+    #         dataset.peptides.remove(pep)
+    #         print(f'{pep.sequence} removed')
 
 
-    for pep in dataset.peptides:
-        tp0_reps = [rep for tp in pep.timepoints for rep in tp.replicates if rep.timepoint.time == 0 ]
-        if len(tp0_reps) == 0:
-            dataset.peptides.remove(pep)
-            print(f'{pep.sequence} removed')
+    # for pep in dataset.peptides:
+    #     tp0_reps = [rep for tp in pep.timepoints for rep in tp.replicates if rep.timepoint.time == 0 ]
+    #     if len(tp0_reps) == 0:
+    #         dataset.peptides.remove(pep)
+    #         print(f'{pep.sequence} removed')
 
-    print('num of tps after refining: ', len(dataset.get_all_timepoints()))
+    # print('num of tps after refining: ', len(dataset.get_all_timepoints()))
 
 
     # step2: calculate the average intensity for each timepoint
     for pep in dataset.peptides:
         pep.get_best_charge_state()
-
+        
     for tp in dataset.get_all_timepoints():
-        try:
-            tp.calculate_avg_iso_envelope()
-        except:
-            print(tp.peptide.sequence, tp.time)
-            raise ValueError('cannot calculate average iso envelope')
+        sigma = get_iso_sigma(tp, loss='JSD')
+        tp.set_sigma(sigma)
+
+    # for tp in dataset.get_all_timepoints():
+    #     try:
+    #         tp.calculate_avg_iso_envelope()
+    #     except:
+    #         print(tp.peptide.sequence, tp.time)
+    #         raise ValueError('cannot calculate average iso envelope')
             
 
     return dataset
@@ -657,7 +662,7 @@ def set_t0_rep_score(dataset):
     print("Set score for %d t0 replicates" % len(t0_reps))
 
 
-def get_weighted_avg_iso_envelope(timepoint):
+def get_weighted_avg_iso_envelope(timepoint, weights=None):
     reps = timepoint.replicates
     
     weights = np.array([rep.raw_ms['Intensity'][rep.raw_ms['Intensity'] > 1e3].mean() for rep in reps])
@@ -674,19 +679,50 @@ def get_weighted_avg_iso_envelope(timepoint):
     
     weighted_average_envelope = np.average(iso_envelopes, axis=0, weights=weights)
     weighted_average_envelope /= weighted_average_envelope.sum()
-    
+
     return weighted_average_envelope
+
+
+def get_weighted_avg_iso_envelope(timepoint, weights=None):
+    reps = timepoint.replicates
+
+    max_len = max(len(rep.isotope_envelope) for rep in reps)
+    
+    iso_envelopes = []
+    for rep in reps:
+        padded_envelope = custom_pad(rep.isotope_envelope, max_len)
+        iso_envelopes.append(padded_envelope)
+    
+    iso_envelopes = np.array(iso_envelopes)
+    
+    average_envelope = np.average(iso_envelopes, axis=0)
+    average_envelope /= average_envelope.sum()
+
+    return average_envelope
+
 
 import itertools
 
-def get_iso_sigma(timepoint):
-    reps = timepoint.replicates
-    if len(reps) == 1:
-        return 0.1
-    rep_combinations = list(itertools.combinations(reps, 2))
-    #error =  np.average([get_sum_ae(com[0].isotope_envelope, com[1].isotope_envelope) for com in rep_combinations])
-    error =  np.average([get_divergence(com[0].isotope_envelope, com[1].isotope_envelope, method='JS') for com in rep_combinations])
 
+def get_iso_sigma(timepoint, loss=None):
+    reps = timepoint.replicates
+    if loss is None:
+        raise ValueError('need to specify loss')
+    
+    elif loss == 'AE':
+        if len(reps) == 1:
+            return 0.1
+        else:
+            rep_combinations = list(itertools.combinations(reps, 2))
+            error =  np.average([get_sum_ae(com[0].isotope_envelope, com[1].isotope_envelope) for com in rep_combinations])
+            
+    elif loss == 'JSD':
+        if len(reps) == 1:
+            return 0.1
+        else:
+            rep_combinations = list(itertools.combinations(reps, 2))
+            error =  np.average([get_divergence(com[0].isotope_envelope, com[1].isotope_envelope, method='JS') for com in rep_combinations])
+    
     return error
 
 
@@ -792,24 +828,22 @@ def remove_reps_from_dataset(removing_reps, dataset):
     # remove the replicates from the dataset
     for pep in dataset.peptides:
         for tp in pep.timepoints:
-            for rep in tp.replicates:
-                if rep in removing_reps:
-                    tp.replicates.remove(rep)
-                    #print(f'{rep} removed')
+            tp.replicates = [r for r in tp.replicates if r not in removing_reps]
+            #print(f'{rep} removed')
         
                             
             # Remove timepoints without replicates
             if tp.replicates == []:
-                pep.timepoints.remove(tp)
+                pep.timepoints = [t for t in pep.timepoints if t != tp]
                 print(f'{pep.sequence} {tp.time} removed')
                 
         # Remove peptides without timepoints or with no time 0
         if pep.timepoints == []:
-            dataset.peptides.remove(pep)
+            dataset.peptides = [p for p in dataset.peptides if p != pep]
             print(f'{pep.sequence} removed')
 
     for pep in dataset.peptides:
         tp0_reps = [rep for tp in pep.timepoints for rep in tp.replicates if rep.timepoint.time == 0 ]
         if len(tp0_reps) == 0:
-            dataset.peptides.remove(pep)
+            dataset.peptides = [p for p in dataset.peptides if p != pep]
             print(f'{pep.sequence} removed')
