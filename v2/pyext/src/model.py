@@ -59,7 +59,8 @@ class ResidueGridModel(object):
                 model[i] = 0
             else:
                 if random:
-                    model[i] = numpy.random.randint(1, high=self.grid_size, size=1)[0]
+                    model[i] = numpy.random.randint(2, high=self.grid_size, size=1)[0]
+                    #model[i] = numpy.random.randint(int(self.grid_size*0.5), high=int(self.grid_size*0.9), size=1)[0]
                 else:
                     model[i] = int(value)
         if initialize:

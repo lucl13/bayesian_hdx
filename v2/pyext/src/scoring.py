@@ -293,7 +293,7 @@ class GaussianNoiseModel(object):
 
                 # Calculate a score for each replicate
                 for rep in tp.get_replicates():
-                    replicate_likelihood = self.replicate_score(model=model_tp_deut, exp=rep.deut, sigma=tp.sigma) 
+                    replicate_likelihood = self.replicate_score(model=model_tp_deut, exp=rep.deut, sigma=0.5) 
                     if replicate_likelihood <= 0:
                         rep.set_score(10000000000)
                     else:
@@ -348,13 +348,13 @@ class GaussianNoiseModelIsotope(object):
 
     def replicate_score(self, model, exp, sigma):
         #Forward model
-        if np.sum(model<0) > 0:
-           raw_likelihood = math.exp(-(tools.get_sum_ae(model, exp)**2)/(2*sigma**2))/(sigma*math.sqrt(2*numpy.pi))
+        # if np.sum(model<0) > 0:
+        #    raw_likelihood = math.exp(-(tools.get_sum_ae(model, exp)**2)/(2*sigma**2))/(sigma*math.sqrt(2*numpy.pi))
            
-        else:
-            raw_likelihood = math.exp(-(tools.get_divergence(model, exp, method='JS')**2)/(2*sigma**2))/(sigma*math.sqrt(2*numpy.pi))
+        # else:
+        #     raw_likelihood = math.exp(-(tools.get_divergence(model, exp, method='JS')**2)/(2*sigma**2))/(sigma*math.sqrt(2*numpy.pi))
         
-        #raw_likelihood = math.exp(-(tools.get_sum_ae(model, exp)**2)/(2*sigma**2))/(sigma*math.sqrt(2*numpy.pi))
+        raw_likelihood = math.exp(-(tools.get_sum_ae(model, exp)**2)/(2*sigma**2))/(sigma*math.sqrt(2*numpy.pi))
     
         if self.truncated:
             raw_likelihood *= 1/ ( 0.5 * ( scipy.special.erf( (self.upper_bound-exp)/sigma * math.sqrt(3.1415) ) - scipy.special.erf( (self.lower_bound-exp)/sigma * math.sqrt(3.1415) ) ) )
@@ -393,7 +393,9 @@ class GaussianNoiseModelIsotope(object):
 
             t0_p_D = pep.best_t0_replicate.isotope_envelope # non-deuterated isotope distribution
 
-
+            # avg max d of the peptide
+            pep_avg_max_d = np.average([rep.max_d for tp  in pep.timepoints for rep in tp.replicates])
+            
             # Cycle over all timepoints
             for tp in [tp for tp in pep.get_timepoints() if tp.time != 0]:
                 # initialize tp score to the sigma prior
@@ -410,7 +412,7 @@ class GaussianNoiseModelIsotope(object):
                 model_tp_raw_deut = numpy.array(model_tp_raw_deut)
                 
                 # To do: Full-D correction
-                model_tp_raw_deut = model_tp_raw_deut*(pep.max_d/pep.num_observable_amides)  # 0-1, not 0-100 % 
+                model_tp_raw_deut = model_tp_raw_deut*(pep_avg_max_d/pep.num_observable_amides)  # 0-1, not 0-100 % 
 
                 # model isotope distribution
                 mpdel_p_D = tools.event_probabilities(model_tp_raw_deut) # deturium isotope distribution
@@ -419,6 +421,11 @@ class GaussianNoiseModelIsotope(object):
                 # Calculate a score for each replicate
                 for rep in tp.get_replicates():
                     replicate_likelihood = self.replicate_score(model=mpdel_full_iso, exp=rep.isotope_envelope, sigma=0.3)                                 
+                    
+                    #peptide lengthe weighting
+                    # weight = 1 / np.log(pep.num_observable_amides + 1)
+                    # replicate_likelihood *= weight
+                    
                     if np.isnan(replicate_likelihood):
                         print(pep.sequence, tp.time, rep.charge_state)
                         print(mpdel_full_iso, rep.isotope_envelope)

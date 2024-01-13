@@ -786,7 +786,8 @@ def merge_mutiple_datasets(datasets_list):
 
     for dataset in datasets_list:
         for pep in dataset.peptides:
-
+            
+            pep.set_dataset(merged_datasets)
             new_peptide = merged_datasets.create_peptide(pep.sequence, pep.start_residue,)
             new_peptide.max_d = pep.max_d
 

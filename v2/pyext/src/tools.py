@@ -631,7 +631,7 @@ def refine_dataset(dataset):
         pep.get_best_charge_state()
         
     for tp in dataset.get_all_timepoints():
-        sigma = get_iso_sigma(tp, loss='JSD')
+        sigma = get_iso_sigma(tp, loss='AE')
         tp.set_sigma(sigma)
 
     # for tp in dataset.get_all_timepoints():
@@ -830,8 +830,7 @@ def remove_reps_from_dataset(removing_reps, dataset):
         for tp in pep.timepoints:
             tp.replicates = [r for r in tp.replicates if r not in removing_reps]
             #print(f'{rep} removed')
-        
-                            
+                                 
             # Remove timepoints without replicates
             if tp.replicates == []:
                 pep.timepoints = [t for t in pep.timepoints if t != tp]
@@ -847,3 +846,13 @@ def remove_reps_from_dataset(removing_reps, dataset):
         if len(tp0_reps) == 0:
             dataset.peptides = [p for p in dataset.peptides if p != pep]
             print(f'{pep.sequence} removed')
+            
+import random
+
+def random_drop_reps(dataset, drop_pecent=20):
+    all_reps = [rep for pep in dataset.peptides for tp in pep.timepoints for rep in tp.replicates if tp.time != 0]
+    k = len(all_reps) * drop_pecent // 100
+    droping_reps = random.sample(all_reps, k)
+
+    remove_reps_from_dataset(droping_reps, dataset)
+    return dataset

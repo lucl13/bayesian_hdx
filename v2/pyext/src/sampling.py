@@ -342,9 +342,10 @@ class MCSampler(object):
         print("Step score | states_avg_protection_factor | mc_acceptance_ratio")
         for i in tqdm(range(NSTEPS)):
             #print("Step:", i)
-            score, model_avg_str, acceptance = self.run_one_step(temperature, write_all)
+            score, model_avg_str, acceptance = self.run_one_step_swap(temperature, write_all)
+            #score, model_avg_str, acceptance = self.run_one_step(temperature, write_all)
             acceptance_total += acceptance
-            if i%100 == 0:
+            if i%50 == 0:
                 print("Step %i, %0.1f | %s, %0.2f" % (i, score, model_avg_str, acceptance))
 
             if write:
@@ -449,6 +450,130 @@ class MCSampler(object):
             model_avg_str+=str(m)+" "
 
         return total_score, model_avg_str[0:-1], acceptance_ratio/len(self.states)#, m_sq_change #acceptance_ratio/len(self.states)
+
+    def run_one_step_swap(self, temperature, write=False):
+        # Running one MC step over all model states and sigma parameters
+        # Loop over all states in self.states
+        total_score = 0
+        acceptance_ratio = 0
+
+        for state in self.states:
+
+            init_model = deepcopy(state.output_model.model)
+            init_score = state.get_score()
+
+            ###########################
+            # This should be movable particles
+            ###########################
+
+            if state.output_model.sample_only_observed_residues==True:
+                resis = state.observed_residues
+            else:
+                resis = state.get_exchanging_residues()
+
+            shuffle(resis)
+            flips = int(max(math.ceil((self.pct_moves * len(resis))/100.), 1))
+            # Flip a number of residues
+
+            for i in range(flips):
+            #for i in range(len(resis)):
+                if i < len(resis) - 1:
+                    # Select two adjacent residues for swap
+                    r1 = resis[i]
+                    r2 = resis[i + 1]
+
+                    # Get the current values for these residues
+                    oldval1 = int(state.output_model.get_model_residue(r1))
+                    oldval2 = int(state.output_model.get_model_residue(r2))
+
+                    # Swap the values
+                    state.output_model.change_residue(r1, oldval2)
+                    state.output_model.change_residue(r2, oldval1)
+                    state.change_single_residue_incorporation(r1, oldval2)
+                    state.change_single_residue_incorporation(r2, oldval1)
+
+                    # Calculate the new score after swapping
+                    newscore = state.calculate_peptides_score(state.get_all_peptides(), state.output_model.get_current_model())
+                    state.set_score(newscore)
+
+                    # Decide whether to accept the swap
+                    accept = metropolis_criteria(init_score, newscore, 0.01)
+
+                    if not accept:
+                        # Revert the swap if not accepted
+                        state.output_model.change_residue(r1, oldval1)
+                        state.output_model.change_residue(r2, oldval2)
+                        state.change_single_residue_incorporation(r1, oldval1)
+                        state.change_single_residue_incorporation(r2, oldval2)
+                        state.set_score(init_score)
+                    else:
+                        init_score = newscore  # Update initial score for next iteration
+
+
+            for r in resis[:flips]:
+                # Get the sector that holds this residue           
+                #r_sector = state.residue_sector_dictionary[r]
+                # Get the current value for this residue
+                oldval = int(state.output_model.get_model_residue(r))
+                # Propose a new value given the current state
+                oldscore = state.get_score()
+                #print(r, oldval, oldscore, state.output_model.get_model())
+                newval = self.residue_sampler.propose_move(oldval) 
+
+                # Change the residue incorporation values in each sector and calculate the new score:
+                state.change_single_residue_incorporation(r, newval)
+                newscore = state.calculate_peptides_score(state.get_all_peptides(), state.output_model.get_current_model())
+                state.set_score(newscore)
+
+                accept = metropolis_criteria(oldscore, newscore, temperature)
+
+                if not accept:
+                    flips -= 1
+                    state.output_model.change_residue(r, oldval)
+                    state.change_single_residue_incorporation(r, oldval)
+                    state.set_score(oldscore)
+
+            # Determine the total number of moves performed
+            flips2=0
+            for i in range(len(init_model)):
+                if init_model[i] != state.output_model.model[i]:
+                    flips2 += 1
+
+                # Measures the total change in Pf value over all residues. Might be useful.
+                #m_sq_change = sum((state.output_model.model - init_model)**2)
+
+
+            # Now sample the sigma values if we are doing that
+            if self.sigma_sample_level is not None:
+                for d in state.data:
+                    self.sample_sigma(state, temperature)
+
+            # Recalculate the state score and add it to the total score
+            final_state_score = state.calculate_peptides_score(state.get_all_peptides(), state.output_model.get_current_model())
+            state.set_score(final_state_score)
+            total_score += final_state_score
+
+            '''
+            mpf = state.output_model.get_current_model()
+            tot_mpf = 0
+            num_mpf = 0
+            for pep in state.data[0].get_peptides():
+                for i in pep.get_observable_residue_numbers():
+                    if not math.isnan(mpf[i-1]) and mpf[i-1] != numpy.inf:
+                        tot_mpf += mpf[i-1]
+                        num_mpf += 1 
+            '''
+
+            acceptance_ratio += float(flips2)/int(max(math.ceil((self.pct_moves * len(resis))/100.), 1))
+            #acceptance_ratio += float(flips2)/int(max(math.ceil((self.pct_moves * len(resis)+len(resis))/100.), 1))
+
+        model_avg = [numpy.average(state.output_model.get_current_model()) for s in self.states]
+        model_avg_str = ""
+        for m in model_avg:
+            model_avg_str+=str(m)+" "
+
+        return total_score, model_avg_str[0:-1], acceptance_ratio/len(self.states)#, m_sq_change #acceptance_ratio/len(self.states)
+
 
 
     def sample_sigma(self, state, temperature):
