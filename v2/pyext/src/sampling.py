@@ -96,6 +96,32 @@ class SampledInt(object):
         # self.object.set_value(self.range[self.old_index])
         self.moved=False
 
+class SampledIntCircular(SampledInt):
+    def propose_move(self, previous):
+        if self.moved:
+            print("This mover has already been moved")
+
+        if self.random:
+            # Remove the previous value from the list of potential moves
+            this_range = [s for s in self.range if s != previous]
+            new_index = numpy.random.randint(0, len(this_range))
+
+            # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+            # Instead of this, change the value in the residue object
+            # self.object.set_value(new_index)
+            return this_range[new_index]
+
+        else:
+            self.old_index = self.range.index(previous)
+            sign = numpy.random.randint(0, 2) * 2 - 1
+            magnitude = numpy.random.randint(1, self.adjacency + 1)
+            new_index = (self.old_index + magnitude * sign) % len(self.range)
+            # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+            # Instead of this, change the value in the residue object
+            # self.object.set_value(new_index)
+            return self.range[new_index]
+
+        self.moved=True
 
 class SampledFloat(object):
     def __init__(self, lower_bound, upper_bound, maxdel, distribution="uniform", random=False, is_sampled=True):
@@ -208,7 +234,8 @@ class MCSampler(object):
         m = self.states[0].output_model
 
         if m.sampler_type == "int":
-            self.residue_sampler = SampledInt(m.sampler_range())
+            #self.residue_sampler = SampledInt(m.sampler_range())
+            self.residue_sampler = SampledIntCircular(m.sampler_range())
         elif m.sampler_type == "float":
             raise Exception("Sampler.__init__: Floating point representation for residues is not implemented yet")
 
@@ -315,7 +342,8 @@ class MCSampler(object):
         return temp
 
 
-    def run(self, NSTEPS=100, init_temp=10, write=False, write_all=False, acceptance_range=None, find_temperature=False):
+    def run(self, NSTEPS=100, init_temp=10, write=False, write_all=False, acceptance_range=None, find_temperature=False, 
+            if_using_swap=True):
         print("Starting run")
         if acceptance_range is None:
             acceptance_range = self.acceptance_range
@@ -342,8 +370,10 @@ class MCSampler(object):
         print("Step score | states_avg_protection_factor | mc_acceptance_ratio")
         for i in tqdm(range(NSTEPS)):
             #print("Step:", i)
-            score, model_avg_str, acceptance = self.run_one_step_swap(temperature, write_all)
-            #score, model_avg_str, acceptance = self.run_one_step(temperature, write_all)
+            if if_using_swap:
+                score, model_avg_str, acceptance = self.run_one_step_swap(temperature, write_all)
+            else:
+                score, model_avg_str, acceptance = self.run_one_step(temperature, write_all)
             acceptance_total += acceptance
             if i%50 == 0:
                 print("Step %i, %0.1f | %s, %0.2f" % (i, score, model_avg_str, acceptance))

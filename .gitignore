@@ -42,6 +42,4 @@ ehthumbs.db
 Thumbs.db
 
 # ignore the raw mass spec data
-/home/chenlin/Documents/research_git/bayesian_hdx/v2/examples/pfka/Biorep1_TechRep3_spectra
-/home/chenlin/Documents/research_git/bayesian_hdx/v2/examples/rbsb/SpecExport_1025
-/home/chenlin/Documents/research_git/bayesian_hdx/v2/examples/rbsb/SpecExport_1018
+v2/examples

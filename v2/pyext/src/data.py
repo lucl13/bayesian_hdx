@@ -6,6 +6,8 @@ import hxio
 import numpy
 import numpy.random
 import pandas as pd
+import math
+from hdxrate import k_int_from_sequence
 
 def calculate_percent_d(dataset):
     # Calculates the averaged %D over all timepoints in a peptide.
@@ -248,7 +250,11 @@ class Dataset(object):
         self.state = state
 
     def calculate_intrinsic_rates(self):
-        self.intrinsic = tools.get_sequence_intrinsic_rates(self.get_sequence(), self.conditions.pH, self.conditions.temperature, log=True)
+        #self.intrinsic = tools.get_sequence_intrinsic_rates(self.get_sequence(), self.conditions.pH, self.conditions.temperature, log=True)
+        self.intrinsic = numpy.log10(k_int_from_sequence(self.get_sequence(), 
+                                             self.conditions.temperature, 
+                                             self.conditions.pH,
+                                             d_percentage=self.conditions.saturation*100))
         return self.intrinsic
 
     def get_intrinsic_rates(self):
@@ -781,8 +787,9 @@ def merge_mutiple_datasets(datasets_list):
     if len(set(names)) != 1:
         raise ValueError("Datasets must have the same name")
     
-
-    merged_datasets = Dataset(name=datasets_list[0].name, sequence=datasets_list[0].sequence, conditions=Conditions())
+    if len(set([(dataset.conditions.temperature,dataset.conditions.pH,dataset.conditions.saturation) for dataset in datasets_list])) != 1:
+        raise ValueError("Datasets must have the same condition")
+    merged_datasets = Dataset(name=datasets_list[0].name, sequence=datasets_list[0].sequence, conditions=datasets_list[0].conditions)
 
     for dataset in datasets_list:
         for pep in dataset.peptides:
@@ -810,3 +817,56 @@ def merge_mutiple_datasets(datasets_list):
     merged_datasets.calculate_observable_protection_factors()
     
     return merged_datasets
+
+
+def generate_range_chunks(total_length, chunk_length=100, extra_length=20):
+
+    chunks = []
+
+    for i in range(math.ceil(total_length/chunk_length)):
+        chunk_start = max(i*chunk_length-extra_length, 0)
+        chunk_end = min((i+1)*chunk_length+extra_length, total_length)
+
+        chunks.append((chunk_start, chunk_end))
+
+    return chunks
+
+
+def spilt_dataset_into_chunks(dataset, chunk_size=100):
+
+    protein_size = len(dataset.sequence)
+    range_chunks = generate_range_chunks(protein_size, chunk_length=chunk_size)
+
+    chunked_datasets = []
+
+    for i in range(len(range_chunks)):
+        start, end = range_chunks[i]
+        chunked_dataset = Dataset(name=dataset.name, sequence=dataset.sequence, conditions=dataset.conditions)
+        
+        for pep in dataset.peptides:
+            if (start <= pep.start_residue <= end) or (start <= pep.end_residue <= end):
+                pep.set_dataset(chunked_dataset)
+                new_peptide = chunked_dataset.create_peptide(pep.sequence, pep.start_residue,)
+                new_peptide.max_d = pep.max_d
+
+                if new_peptide is not None:
+
+                    for tp in pep.get_timepoints():
+
+                        # If timepoint is already in fragment, grab that timepoint
+                        if tp.time in [tp.time for tp in new_peptide.get_timepoints()]:
+                            tp_obj = new_peptide.get_timepoint_by_time(tp.time)
+                        #If not, add a new timepoint at this time.  What to put for sigma??
+                        else:
+                            tp_obj = new_peptide.add_timepoint(tp.time)
+
+                        for rep in tp.get_replicates():
+                            tp_obj.replicates.append(rep)
+                            
+
+        chunked_dataset.observable_bounds = dataset.observable_bounds
+        chunked_dataset.observable_protection_factors = dataset.observable_protection_factors
+    
+        chunked_datasets.append(chunked_dataset)
+
+    return range_chunks, chunked_datasets
