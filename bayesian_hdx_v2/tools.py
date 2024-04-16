@@ -820,6 +820,11 @@ def event_probabilities(p_array):
     # The probabilities of 0, 1, 2, ..., n successes in n events
     probabilities = dp[n]
     
+    # if negative values, set to 0
+    if np.any(probabilities < 0):
+        probabilities[probabilities < 0] = 0
+        probabilities = probabilities / np.sum(probabilities)
+
     return probabilities
 
 
