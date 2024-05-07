@@ -16,6 +16,8 @@ from itertools import combinations_with_replacement
 from itertools import permutations
 from bayesian_hdx_v2 import tools
 from tqdm import tqdm
+import MDAnalysis
+import numpy as np
 
 # if exp(-diff/temp) > rand: accept
 
@@ -97,7 +99,7 @@ class SampledInt(object):
         self.moved=False
 
 class SampledIntCircular(SampledInt):
-    def propose_move(self, previous):
+    def propose_move(self, previous, lower_bound=None, upper_bound=None):
         if self.moved:
             print("This mover has already been moved")
 
@@ -115,7 +117,10 @@ class SampledIntCircular(SampledInt):
             self.old_index = self.range.index(previous)
             sign = numpy.random.randint(0, 2) * 2 - 1
             magnitude = numpy.random.randint(1, self.adjacency + 1)
-            new_index = (self.old_index + magnitude * sign) % len(self.range)
+            if lower_bound is None and upper_bound is None:
+                new_index = (self.old_index + magnitude * sign) % len(self.range)
+            else:
+                new_index = (self.old_index + magnitude * sign) % (upper_bound - lower_bound) + lower_bound
             # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
             # Instead of this, change the value in the residue object
             # self.object.set_value(new_index)
@@ -247,6 +252,79 @@ class MCSampler(object):
         if initialize:
             for s in self.states:
                 s.initialize()
+
+        self.structural_prior = None
+
+    def set_structural_prior(self, input_pdb):
+        
+        def find_peptide(seq, peptide):
+            start_index = seq.find(peptide)
+            if start_index == -1:
+                return (-1, -1)
+            end_index = start_index + len(peptide) - 1
+            return (start_index, end_index)
+        
+        def pdb2seq(pdb_file):
+
+            import warnings
+            from Bio import SeqIO
+            from Bio import BiopythonWarning
+
+            # Suppress all Biopython-specific warnings
+            with warnings.catch_warnings():
+                warnings.simplefilter('ignore', BiopythonWarning)
+                records = list(SeqIO.parse(pdb_file, 'pdb-atom'))
+                return str(records[0].seq)
+
+        
+        pdb_sequence = pdb2seq(input_pdb)
+        a_middle_pep = self.states[0].data[0].get_sequence()[80:90]
+        
+        pdb_start, pdb_end= find_peptide(pdb_sequence, a_middle_pep)
+        index_offset = 80 - pdb_start 
+
+
+        def get_if_exposed(pdb_file,):
+            
+            import warnings
+            from MDAnalysis.analysis.hydrogenbonds.hbond_analysis import HydrogenBondAnalysis as HBA
+            
+            warnings.filterwarnings("ignore")
+            
+            u = MDAnalysis.Universe(pdb_file,)
+            
+            protein = u.select_atoms('protein')
+
+            if_exposed = []
+            for res in protein.residues:
+
+                hbonds = HBA(universe=u, d_a_cutoff=3.5, d_h_a_angle_cutoff=30)
+                hbonds.donors_sel = f'protein and name N and resid {res.resid}'
+                # caution, in pdb file generate by mdtraj, HNs are renamed to H
+                hbonds.hydrogens_sel = 'protein and name H'
+                hbonds.acceptors_sel = 'protein and name O'
+                hbonds.run()
+                
+                if hbonds.results.hbonds.size == 0:
+                    if_exposed.append(1)
+                else:
+                    if_exposed.append(0)
+                
+            return np.array(if_exposed)
+
+
+        if_exposed_array = get_if_exposed(input_pdb)
+        
+        sample_range_list = []
+        for i in range(len(self.states[0].data[0].get_sequence())):
+            res_i_in_pdb = i - index_offset
+            if res_i_in_pdb >= 0 and if_exposed_array[res_i_in_pdb] == 1:
+                upper_bound = np.where(np.linspace( 0, 14, self.states[0].output_model.grid_size )<3)[0][-1]
+                sample_range_list.append((0, upper_bound))
+            else:
+                sample_range_list.append((0, self.states[0].output_model.grid_size ))
+        
+        self.structural_prior = sample_range_list
 
 
     def run_exponential_temperature_decay(self, tmax=100, tmin=2.0, 
@@ -426,7 +504,10 @@ class MCSampler(object):
                 # Propose a new value given the current state
                 oldscore = state.get_score()
                 #print(r, oldval, oldscore, state.output_model.get_model())
-                newval = self.residue_sampler.propose_move(oldval) 
+                if self.structural_prior is not None:
+                    newval = self.residue_sampler.propose_move(oldval, lower_bound=self.structural_prior[r][0], upper_bound=self.structural_prior[r][1])
+                else:
+                    newval = self.residue_sampler.propose_move(oldval) 
 
                 # Change the residue incorporation values in each sector and calculate the new score:
                 state.change_single_residue_incorporation(r, newval)

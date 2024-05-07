@@ -409,8 +409,11 @@ class GaussianNoiseModelIsotope(object):
                 # Calculate a score for each replicate
                 for rep in tp.get_replicates():
                     
-                    model_rep_raw_deut = model_tp_raw_deut*(rep.max_d/pep.num_observable_amides) 
-                    mpdel_p_D = tools.event_probabilities(model_rep_raw_deut) # deturium isotope distribution
+                    # backexchange correction for each replicate
+                    model_tp_raw_deut = model_tp_raw_deut*(rep.max_d/pep.num_observable_amides) 
+                    
+                    # model isotope distribution
+                    mpdel_p_D = tools.event_probabilities(model_tp_raw_deut) # deturium isotope distribution
                     mpdel_full_iso = np.convolve(mpdel_p_D, t0_p_D) # full heavy isotope distribution
 
                     replicate_likelihood = self.replicate_score(model=mpdel_full_iso, exp=rep.isotope_envelope, sigma=0.3)                                 
