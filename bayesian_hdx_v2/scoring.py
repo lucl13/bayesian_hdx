@@ -8,6 +8,7 @@ import scipy
 import scipy.stats
 import math
 import numpy as np
+from numba import jit, njit
 
 
 class ScoringFunction(object):
@@ -204,6 +205,38 @@ class ResiduePfPrior(object):
         return score * self.prior_scale
 
 
+class ExtremeValuePrior(object):
+    '''
+    Given a array of extreme value parameters, apply a prior on the protection factor of each residue.
+
+    '''
+    def __init__(self, pf_categories, scale=1.0):
+        '''
+        -1: low exchaning residue, high protection factor
+        0: normal exchanging residue
+        1: high exchanging residue, low protection factor
+        '''
+        self.prior_scale = scale
+        self.priors = []
+        for p in range(len(pf_categories)):
+            prior = pf_categories[p]
+            if prior == 0:
+                self.priors.append(FlatDistribution())
+            elif prior == 1:
+                self.priors.append(scipy.stats.norm(1.5, 2.0))
+            elif prior == -1:
+                self.priors.append(scipy.stats.norm(6, 4.0))
+
+    def evaluate(self, model):
+        if len(model) != len(self.priors):
+            raise Exception("ERROR scoring.ResiduePfPrior: The length of the Pf prior is not th same as the model")
+
+        score = 0
+        for p in range(len(model)):
+            #print(p, model[p], -1*numpy.log(self.priors[p].pdf(model[p])))
+            score += -1*numpy.log(self.priors[p].pdf(model[p]))
+        return score * self.prior_scale
+
 
 class GaussianNoiseModel(object):
     '''
@@ -329,35 +362,22 @@ class GaussianNoiseModelIsotope(object):
     This model gathers its standard deviation parameters from the individual timepoint objects.
     '''
     def __init__(self, state, truncated=False, bounds=(None, None)):
-        self.truncated=truncated
-
+        self.truncated = truncated
         self.state = state
 
         if truncated:
-            # 10 and -10 are numerically equivalent to no truncation factor when
-            # data is in the range of 0-->1
-            if bounds[1] is None:
-                self.upper_bound = 10
-            else:
-                self.upper_bound = bounds[1]
+            self.upper_bound = bounds[1] if bounds[1] is not None else 10
+            self.lower_bound = bounds[0] if bounds[0] is not None else -10
+        else:
+            self.upper_bound = None
+            self.lower_bound = None
 
-            if bounds[0] is None:
-                self.lower_bound = -10
-            else:
-                self.lower_bound = bounds[0]
 
     def replicate_score(self, model, exp, sigma):
-        #Forward model
-        # if np.sum(model<0) > 0:
-        #    raw_likelihood = math.exp(-(tools.get_sum_ae(model, exp)**2)/(2*sigma**2))/(sigma*math.sqrt(2*numpy.pi))
-           
-        # else:
-        #     raw_likelihood = math.exp(-(tools.get_divergence(model, exp, method='JS')**2)/(2*sigma**2))/(sigma*math.sqrt(2*numpy.pi))
-        
-        raw_likelihood = math.exp(-(tools.get_sum_ae(model, exp)**2)/(2*sigma**2))/(sigma*math.sqrt(2*numpy.pi))
+        raw_likelihood = np.exp(-(tools.get_sum_ae(model, exp) ** 2) / (2 * sigma ** 2)) / (sigma * np.sqrt(2 * np.pi))
     
         if self.truncated:
-            raw_likelihood *= 1/ ( 0.5 * ( scipy.special.erf( (self.upper_bound-exp)/sigma * math.sqrt(3.1415) ) - scipy.special.erf( (self.lower_bound-exp)/sigma * math.sqrt(3.1415) ) ) )
+            raw_likelihood *= 1 / (0.5 * (erf((self.upper_bound - exp) / sigma * np.sqrt(3.1415)) - erf((self.lower_bound - exp) / sigma * np.sqrt(3.1415))))
 
         return raw_likelihood
 
@@ -416,7 +436,7 @@ class GaussianNoiseModelIsotope(object):
                     mpdel_p_D = tools.event_probabilities(model_tp_raw_deut) # deturium isotope distribution
                     mpdel_full_iso = np.convolve(mpdel_p_D, t0_p_D) # full heavy isotope distribution
 
-                    replicate_likelihood = self.replicate_score(model=mpdel_full_iso, exp=rep.isotope_envelope, sigma=0.3)                                 
+                    replicate_likelihood = replicate_score(model=mpdel_full_iso, exp=rep.isotope_envelope, sigma=0.3)                                 
                      
                     if np.isnan(replicate_likelihood):
                         print(pep.sequence, tp.time, rep.charge_state)
@@ -449,3 +469,31 @@ class GaussianNoiseModelIsotope(object):
         return self.calculate_peptides_score(peptides, model)
 
 
+@jit(nopython=True)
+def erf(x):
+    # Approximation of the error function
+    # Constants
+    a1 =  0.254829592
+    a2 = -0.284496736
+    a3 =  1.421413741
+    a4 = -1.453152027
+    a5 =  1.061405429
+    p  =  0.3275911
+
+    # Save the sign of x
+    sign = 1 if x >= 0 else -1
+    x = abs(x)
+
+    # A&S formula 7.1.26
+    t = 1.0 / (1.0 + p * x)
+    y = 1.0 - (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) * t * np.exp(-x * x)
+
+    return sign * y
+
+
+@njit
+def replicate_score(model, exp, sigma):
+    
+    raw_likelihood = np.exp(-(tools.get_sum_ae(model, exp) ** 2) / (2 * sigma ** 2)) / (sigma * np.sqrt(2 * np.pi))
+    
+    return raw_likelihood

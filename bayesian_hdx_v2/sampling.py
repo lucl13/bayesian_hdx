@@ -239,8 +239,8 @@ class MCSampler(object):
         m = self.states[0].output_model
 
         if m.sampler_type == "int":
-            #self.residue_sampler = SampledInt(m.sampler_range())
-            self.residue_sampler = SampledIntCircular(m.sampler_range())
+            self.residue_sampler = SampledInt(m.sampler_range())
+            #self.residue_sampler = SampledIntCircular(m.sampler_range())
         elif m.sampler_type == "float":
             raise Exception("Sampler.__init__: Floating point representation for residues is not implemented yet")
 
