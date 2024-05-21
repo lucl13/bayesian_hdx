@@ -43,3 +43,6 @@ Thumbs.db
 
 # ignore the raw mass spec data
 v2/examples
+
+# egg-info
+*.egg-info
