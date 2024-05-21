@@ -8,8 +8,10 @@ import scipy
 import scipy.stats
 import math
 import numpy as np
-from numba import jit, njit
+from numba import jit, prange, njit
+import numba
 
+# numba.set_num_threads(2)
 
 class ScoringFunction(object):
     '''
@@ -404,58 +406,12 @@ class GaussianNoiseModelIsotope(object):
             # non_peptides are the ones where we simply read the score from last time (didn't change)
             non_peptides = list(set(self.state.get_all_peptides())-set(peptides))
         #print("PEP:", len(peptides), len(non_peptides))
-        for pep in peptides:
-            peptide_score = 0
+        
+        all_rep_data = self.state.all_rep_data
+        all_rep_data['residue_incorporations'] = self._prepare_residue_incorporations_data(peptides)
+        all_rep_data['mpdel_full_iso'] = calculate_model_full_iso(all_rep_data)
 
-            d = pep.get_dataset()
-
-            observable_residues = pep.get_observable_residue_numbers()
-
-            t0_p_D = pep.best_t0_replicate.isotope_envelope # non-deuterated isotope distribution
-
-            # avg max d of the peptide
-            pep_avg_max_d = np.average([rep.max_d for tp  in pep.timepoints for rep in tp.replicates])
-            
-            # Cycle over all timepoints
-            for tp in [tp for tp in pep.get_timepoints() if tp.time != 0]:
-                # initialize tp score to the sigma prior
-                tp_score = 0
-
-                model_tp_raw_deut = []
-                for r in observable_residues:
-                    model_tp_raw_deut.append(self.state.residue_incorporations[d][r][tp.time])
-                model_tp_raw_deut = numpy.array(model_tp_raw_deut)
-                
-                # Calculate a score for each replicate
-                for rep in tp.get_replicates():
-                    
-                    # backexchange correction for each replicate
-                    model_tp_raw_deut = model_tp_raw_deut*(rep.max_d/pep.num_observable_amides) 
-                    
-                    # model isotope distribution
-                    mpdel_p_D = tools.event_probabilities(model_tp_raw_deut) # deturium isotope distribution
-                    mpdel_full_iso = np.convolve(mpdel_p_D, t0_p_D) # full heavy isotope distribution
-
-                    replicate_likelihood = replicate_score(model=mpdel_full_iso, exp=rep.isotope_envelope, sigma=0.3)                                 
-                     
-                    if np.isnan(replicate_likelihood):
-                        print(pep.sequence, tp.time, rep.charge_state)
-                        print(mpdel_full_iso, rep.isotope_envelope)
-
-                        raise(Exception("NaN in replicate score"))
-                    if replicate_likelihood <= 0:
-                        rep.set_score(10000000000)
-                    else:
-                        rep.set_score(-1*math.log(replicate_likelihood))
-                    tp_score += rep.get_score()
-
-                # Set the timepoint score
-                tp.set_score(tp_score)
-
-                peptide_score += tp_score
-
-            total_score += peptide_score
-            #print(pep.sequence, peptide_score, protection_factors)
+        total_score += replicate_score(all_rep_data['mpdel_full_iso'], all_rep_data['isotope_envelope'], 0.3)
 
         for pep in non_peptides:
             #print(pep.sequence, pep.get_score(), protection_factors)
@@ -464,6 +420,32 @@ class GaussianNoiseModelIsotope(object):
         self.total_score = total_score
         #print(total_score)
         return total_score
+
+
+    def _prepare_residue_incorporations_data(self, peptides):
+        
+        d = self.state.data[0]
+
+        res_incorp = []
+
+        for pep in peptides:
+
+            observable_residues = pep.get_observable_residue_numbers()
+
+            for tp in [tp for tp in pep.get_timepoints() if tp.time != 0]:
+
+                model_tp_raw_deut = []
+                for r in observable_residues:
+                    model_tp_raw_deut.append(self.state.residue_incorporations[d][r][tp.time])
+                
+                model_tp_raw_deut = tools.custom_pad(numpy.array(model_tp_raw_deut), 20, 0.0)
+
+                for rep in tp.get_replicates(): 
+                
+                    res_incorp.append(model_tp_raw_deut)
+        
+        return np.array(res_incorp).reshape(-1, 20)
+
 
     def evaluate(self, model, peptides):
         return self.calculate_peptides_score(peptides, model)
@@ -491,9 +473,53 @@ def erf(x):
     return sign * y
 
 
-@njit
+
+@njit(parallel=True)
+def convolve_and_truncate(p_D_array, t0_p_D_array):
+    num_samples = len(p_D_array)
+    truncated_len = 20
+    results = np.empty((num_samples, truncated_len), dtype=np.float32)  # 提前定义所需的输出数组大小
+
+    for i in prange(num_samples):
+        conv_result = np.convolve(p_D_array[i], t0_p_D_array[i])
+        results[i] = conv_result[:truncated_len]  # 截断卷积结果
+
+    return results
+
+
+@njit(parallel=True)
+def compute_event_probabilities(deuterations):
+    n = len(deuterations)
+    results = np.empty((n, 20), dtype=np.float32)
+    for i in prange(n):
+        # Assuming event_probabilities expects an array slice and returns a float
+        # Process a slice of the first 19 elements for each array in deuterations
+        result = tools.event_probabilities(deuterations[i][:19])
+        results[i] = result  # Storing a float into the results array
+    return results
+
+
+
+def calculate_model_full_iso(all_rep_data):
+    # Calculate raw deuteration levels
+    raw_deuteration =all_rep_data['residue_incorporations'] * all_rep_data['max_d'] / all_rep_data['num_observable_amides']
+
+    p_D_array = compute_event_probabilities(raw_deuteration)
+    
+    # Convolve and truncate results
+    model_full_iso = convolve_and_truncate(p_D_array, all_rep_data['t0_p_D'])
+
+    return model_full_iso
+
+
 def replicate_score(model, exp, sigma):
     
-    raw_likelihood = np.exp(-(tools.get_sum_ae(model, exp) ** 2) / (2 * sigma ** 2)) / (sigma * np.sqrt(2 * np.pi))
+    sum_ae = np.abs(model - exp).sum(axis=1)
+    raw_likelihood = np.exp(-(sum_ae ** 2) / (2 * sigma ** 2)) / (sigma * np.sqrt(2 * np.pi))
+
+    # set 10000000000 when raw_likelihood <0 
+    raw_likelihood[raw_likelihood <= 0] = 10000000000
+
+    total_score = np.sum(-1*np.log(raw_likelihood))
     
-    return raw_likelihood
+    return total_score

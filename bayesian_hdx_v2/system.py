@@ -13,6 +13,7 @@ from numpy import linalg
 import sys
 from copy import deepcopy
 import os.path
+import numpy as np
 
 
 
@@ -210,6 +211,9 @@ class State(object):
                 raise Exception("Exiting at State.add_dataset. Peptide " + p.sequence + " does not match the sequence")
         self.data.append(dataset)
         dataset.set_state(self)
+
+        self.all_rep_data = self._prepare_data(self.get_all_peptides())
+        
 
     def peptide_sequence_consistency(self, peptide):
         '''
@@ -526,6 +530,55 @@ class State(object):
             residue_information += d.get_residue_information_content(protection_factors)
 
         return residue_information
+    
+
+
+    def _prepare_data(self, peptides):
+        # Using a list to gather all data because its dynamic nature suits varying data lengths
+        all_data = []
+
+        # Iterate over each peptide
+        for pep in peptides:
+            observable_residues = np.array(pep.get_observable_residue_numbers(), dtype=np.float32)
+            best_t0_replicate_isotope = pep.best_t0_replicate.isotope_envelope
+            num_observable_amides = np.array([pep.num_observable_amides], dtype=np.float32)
+            
+            # Iterate over each timepoint that is not zero
+            for tp in [tp for tp in pep.get_timepoints() if tp.time != 0]:
+                time_array = np.array([tp.time], dtype=np.float32)
+                
+                # Pre-compute residue incorporations
+                # residue_incorporations = np.array([state.residue_incorporations[pep.get_dataset()][r][tp.time] 
+                #                                 for r in observable_residues], dtype=np.float32)
+
+                # Iterate over each replicate
+                for rep in tp.get_replicates():
+                    rep_data = [
+                        tools.custom_pad(observable_residues, 20, 0.0),
+                        best_t0_replicate_isotope,
+                        tools.custom_pad(num_observable_amides, 20, pep.num_observable_amides),
+                        tools.custom_pad(time_array, 20, tp.time),
+                        tools.custom_pad(np.array([rep.max_d], dtype=np.float32), 20, rep.max_d),
+                        rep.isotope_envelope,
+                        # tools.custom_pad(residue_incorporations, 20, 0.0)
+                    ]
+                    all_data.append(rep_data)
+
+        # Convert list of lists to a NumPy array for efficient manipulation
+        all_data = np.array(all_data, dtype=np.float32)
+
+        # Organizing data into a dictionary by column
+        all_rep_data = {
+            'observable_residues': all_data[:, 0],
+            't0_p_D': all_data[:, 1],
+            'num_observable_amides': all_data[:, 2],
+            'time': all_data[:, 3],
+            'max_d': all_data[:, 4],
+            'isotope_envelope': all_data[:, 5],
+            # 'residue_incorporations': all_data[:, 6]
+        }
+
+        return all_rep_data
 
 
 

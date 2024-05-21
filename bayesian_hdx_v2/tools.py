@@ -748,9 +748,12 @@ def jensen_shannon_divergence(p, q):
 
 @njit
 def custom_pad(array, target_length, pad_value=1e-10):
+    if len(array) >= target_length:
+        padded_array = array[:target_length].astype(np.float64)
+        return padded_array
     #replace 0s with a small value
     array[array == 0] = pad_value
-    padded_array = np.full(target_length, pad_value)  
+    padded_array = np.full(target_length, pad_value, dtype=np.float64)
     padded_array[:len(array)] = array 
     return padded_array
 
@@ -824,6 +827,8 @@ def event_probabilities(p_array):
     if np.any(probabilities < 0):
         probabilities[probabilities < 0] = 0
         probabilities = probabilities / np.sum(probabilities)
+
+    probabilities = custom_pad(probabilities, 20)
 
     return probabilities
 

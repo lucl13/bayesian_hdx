@@ -387,8 +387,10 @@ def load_raw_ms_from_pegion(dataset:Dataset, raw_spectra_path):
         idf = f'{rep.peptide.start_residue}-{rep.peptide.end_residue}-{rep.peptide.sequence}'
 
         npy_file_name = f'{state}_{idf}_tp{int(rep.timepoint.time)}_ch{rep.charge_state}.npy'
-        rep.isotope_envelope = np.load(os.path.join(raw_spectra_path, npy_file_name))
-
+        #rep.isotope_envelope = np.load(os.path.join(raw_spectra_path, npy_file_name))
+        isotope_envelope = np.load(os.path.join(raw_spectra_path, npy_file_name))
+        isotope_envelope = tools.custom_pad(isotope_envelope, 20)
+        rep.isotope_envelope = isotope_envelope
 
     bad_replicates = [rep for rep in all_reps if rep.isotope_envelope is None]
 
