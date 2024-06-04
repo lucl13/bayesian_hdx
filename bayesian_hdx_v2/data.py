@@ -626,13 +626,13 @@ class Timepoint(object):
     def number_of_replicates(self):
         return len(self.replicates)
 
-    def add_replicate(self, deut, experiment_id=None, score=1.0, rt=None, charge_state=None, max_d=None):
+    def add_replicate(self, deut, experiment_id=None, score=1.0, rt=None, charge_state=None, max_d=None, unique_id=None):
         if max_d is not None:
             self.replicates.append(Replicate(deut, experiment_id=experiment_id, reliability=score, rt=rt, charge_state=charge_state,
-                                         timepoint=self, peptide=self.peptide, max_d=max_d))
+                                         timepoint=self, peptide=self.peptide, max_d=max_d, unique_id=unique_id))
         else:
             self.replicates.append(Replicate(deut, experiment_id=experiment_id, reliability=score, rt=rt, charge_state=charge_state,
-                                         timepoint=self, peptide=self.peptide))
+                                         timepoint=self, peptide=self.peptide, unique_id=unique_id))
 
     def get_avg_sd(self):
         if len(self.replicates) < 1:
@@ -739,7 +739,7 @@ class Replicate(object):
         @param rid - the deuterium concentration
         @param recovery - the 2D recovery estimate
     """
-    def __init__(self, deut, experiment_id, reliability=1.0, rt=None, charge_state=None, timepoint=None, peptide=None, max_d=None):
+    def __init__(self, deut, experiment_id, reliability=1.0, rt=None, charge_state=None, timepoint=None, peptide=None, max_d=None, unique_id=None):
         self.deut = deut
         self.experiment_id = experiment_id
         self.reliability = reliability
@@ -747,6 +747,7 @@ class Replicate(object):
         self.charge_state = charge_state
         self.timepoint = timepoint 
         self.peptide = peptide
+        self.unique_id = unique_id
         if max_d is None:
             self.max_d = max_d
         else:

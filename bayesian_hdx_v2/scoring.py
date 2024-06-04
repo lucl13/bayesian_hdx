@@ -375,13 +375,38 @@ class GaussianNoiseModelIsotope(object):
             self.lower_bound = None
 
 
-    def replicate_score(self, model, exp, sigma):
-        raw_likelihood = np.exp(-(tools.get_sum_ae(model, exp) ** 2) / (2 * sigma ** 2)) / (sigma * np.sqrt(2 * np.pi))
-    
-        if self.truncated:
-            raw_likelihood *= 1 / (0.5 * (erf((self.upper_bound - exp) / sigma * np.sqrt(3.1415)) - erf((self.lower_bound - exp) / sigma * np.sqrt(3.1415))))
+    def replicate_score(self, model=None, exp=None, model_centroid=None, exp_centroid=None, sigma=0.3):
+        b = sigma / np.sqrt(2)
+        sum_ae = np.abs(model - exp).sum(axis=1)
+        laplace_likelihood = np.exp(-sum_ae / b) / (2 * b)
 
-        return raw_likelihood
+        gaussian_likelihood = np.exp(-((model_centroid - exp_centroid) ** 2) / (2 * sigma ** 2)) / (sigma * np.sqrt(2 * np.pi))
+    
+        # w_laplace = 0.7
+        # w_gaussian = 0.3
+        
+        # raw_likelihood = (laplace_likelihood)**w_laplace * (gaussian_likelihood)**w_gaussian
+
+        raw_likelihood = laplace_likelihood * gaussian_likelihood
+        
+        # if self.truncated:
+        #     upper_gaussian = (self.upper_bound - exp_centroid) / sigma
+        #     lower_gaussian = (self.lower_bound - exp_centroid) / sigma
+        #     gaussian_truncation_factor = 1 / (0.5 * (erf(upper_gaussian / np.sqrt(2)) - erf(lower_gaussian / np.sqrt(2))))
+
+        #     upper_laplace = (self.upper_bound - exp) / b
+        #     lower_laplace = (self.lower_bound - exp) / b
+        #     laplace_truncation_factor = 1 / (0.5 * (erf(upper_laplace / np.sqrt(2)) - erf(lower_laplace / np.sqrt(2))))
+            
+        #     raw_likelihood *= gaussian_truncation_factor * laplace_truncation_factor
+
+        # set 10000000000 when raw_likelihood <0 
+        raw_likelihood[raw_likelihood <= 0] = 10000000000
+
+        total_score = np.sum(-1*np.log(raw_likelihood))        
+        
+        return total_score
+    
 
     def peptide_confidence_score(self, peptide):
         # User-definable function for converting peptide confidence into a likelihood.
@@ -409,9 +434,13 @@ class GaussianNoiseModelIsotope(object):
         
         all_rep_data = self.state.all_rep_data
         all_rep_data['residue_incorporations'] = self._prepare_residue_incorporations_data(peptides)
-        all_rep_data['mpdel_full_iso'] = calculate_model_full_iso(all_rep_data)
+        all_rep_data['model_centroid'], all_rep_data['model_full_iso'] = calculate_model_full_iso(all_rep_data)
 
-        total_score += replicate_score(all_rep_data['mpdel_full_iso'], all_rep_data['isotope_envelope'], 0.3)
+        total_score += self.replicate_score(model=all_rep_data['model_full_iso'],
+                                            exp=all_rep_data['isotope_envelope'],
+                                            model_centroid=all_rep_data['model_centroid'],
+                                            exp_centroid=all_rep_data['exp_centroid'],
+                                            sigma=0.3)
 
         for pep in non_peptides:
             #print(pep.sequence, pep.get_score(), protection_factors)
@@ -503,23 +532,24 @@ def compute_event_probabilities(deuterations):
 def calculate_model_full_iso(all_rep_data):
     # Calculate raw deuteration levels
     raw_deuteration =all_rep_data['residue_incorporations'] * all_rep_data['max_d'] / all_rep_data['num_observable_amides']
+    model_centroid = np.sum(raw_deuteration, axis=1)
 
     p_D_array = compute_event_probabilities(raw_deuteration)
     
     # Convolve and truncate results
     model_full_iso = convolve_and_truncate(p_D_array, all_rep_data['t0_p_D'])
 
-    return model_full_iso
+    return model_centroid, model_full_iso
 
 
-def replicate_score(model, exp, sigma):
+# def replicate_score(model, exp, sigma):
     
-    sum_ae = np.abs(model - exp).sum(axis=1)
-    raw_likelihood = np.exp(-(sum_ae ** 2) / (2 * sigma ** 2)) / (sigma * np.sqrt(2 * np.pi))
+#     sum_ae = np.abs(model - exp).sum(axis=1)
+#     raw_likelihood = np.exp(-(sum_ae ** 2) / (2 * sigma ** 2)) / (sigma * np.sqrt(2 * np.pi))
 
-    # set 10000000000 when raw_likelihood <0 
-    raw_likelihood[raw_likelihood <= 0] = 10000000000
+#     # set 10000000000 when raw_likelihood <0 
+#     raw_likelihood[raw_likelihood <= 0] = 10000000000
 
-    total_score = np.sum(-1*np.log(raw_likelihood))
+#     total_score = np.sum(-1*np.log(raw_likelihood))
     
-    return total_score
+#     return total_score

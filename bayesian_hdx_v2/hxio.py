@@ -89,6 +89,11 @@ def import_HXcolumns(infile, sequence, name="Data", percentD=False, conditions=N
         start_res = int(fields[column_headers.index("start_res")]) + offset
         time = float(fields[column_headers.index("time")])
         deut = float(fields[column_headers.index("D_inc")])
+        # if no unique_id, set to ''
+        if "unique_id" not in column_headers:
+            unique_id = None
+        else:
+            unique_id = fields[column_headers.index("unique_id")].strip()
         #print("-----", start_res, column_headers.index("start_res"), offset, line)
         if fields[column_headers.index("charge_state")] == "None":
             charge_state = None
@@ -126,7 +131,7 @@ def import_HXcolumns(infile, sequence, name="Data", percentD=False, conditions=N
      
                 # add the deuteration value as a replicate.
                 # Any other replicate information from the file should be added at this step.
-                tp.add_replicate(deut, score=score,charge_state=charge_state, max_d=max_d)
+                tp.add_replicate(deut, score=score,charge_state=charge_state, max_d=max_d, unique_id=unique_id)
                 
             new_peptide.add_timepoint(time)
 
@@ -386,7 +391,10 @@ def load_raw_ms_from_pegion(dataset:Dataset, raw_spectra_path):
         state = rep.peptide.get_dataset().name
         idf = f'{rep.peptide.start_residue}-{rep.peptide.end_residue}-{rep.peptide.sequence}'
 
-        npy_file_name = f'{state}_{idf}_tp{int(rep.timepoint.time)}_ch{rep.charge_state}.npy'
+        if rep.unique_id is not None:
+            npy_file_name = f'{state}_{idf}_tp{int(rep.timepoint.time)}_ch{rep.charge_state}_{rep.unique_id}.npy'
+        else:
+            npy_file_name = f'{state}_{idf}_tp{int(rep.timepoint.time)}_ch{rep.charge_state}.npy'
         #rep.isotope_envelope = np.load(os.path.join(raw_spectra_path, npy_file_name))
         isotope_envelope = np.load(os.path.join(raw_spectra_path, npy_file_name))
         isotope_envelope = tools.custom_pad(isotope_envelope, 20)
