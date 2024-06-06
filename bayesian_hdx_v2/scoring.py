@@ -363,9 +363,15 @@ class GaussianNoiseModelIsotope(object):
 
     This model gathers its standard deviation parameters from the individual timepoint objects.
     '''
-    def __init__(self, state, truncated=False, bounds=(None, None)):
+    def __init__(self, state, envelope_sigma=0.3, centroid_sigma=0.5, w_envelope = 0.7, w_centroid = 0.3, truncated=False, bounds=(None, None)):
+        
         self.truncated = truncated
         self.state = state
+        self.envelope_sigma = envelope_sigma
+        self.centroid_sigma = centroid_sigma
+
+        self.w_envelope = w_envelope
+        self.w_centroid = w_centroid
 
         if truncated:
             self.upper_bound = bounds[1] if bounds[1] is not None else 10
@@ -375,30 +381,24 @@ class GaussianNoiseModelIsotope(object):
             self.lower_bound = None
 
 
-    def replicate_score(self, model=None, exp=None, model_centroid=None, exp_centroid=None, sigma=0.3):
-        b = sigma / np.sqrt(2)
+    def replicate_score(self, model=None, exp=None, model_centroid=None, exp_centroid=None):
+
         sum_ae = np.abs(model - exp).sum(axis=1)
-        laplace_likelihood = np.exp(-sum_ae / b) / (2 * b)
 
-        gaussian_likelihood = np.exp(-((model_centroid - exp_centroid) ** 2) / (2 * sigma ** 2)) / (sigma * np.sqrt(2 * np.pi))
+        envelope_likelihood = np.exp(-(sum_ae ** 2) / (2 * self.envelope_sigma ** 2)) / (self.envelope_sigma * np.sqrt(2 * np.pi))
+        
+        centroid_likelihood = np.exp(-((model_centroid - exp_centroid) ** 2) / (2 * self.centroid_sigma ** 2)) / (self.centroid_sigma * np.sqrt(2 * np.pi))
     
-        # w_laplace = 0.7
-        # w_gaussian = 0.3
         
-        # raw_likelihood = (laplace_likelihood)**w_laplace * (gaussian_likelihood)**w_gaussian
+        raw_likelihood = (envelope_likelihood)**self.w_envelope * (centroid_likelihood)**self.w_centroid
 
-        raw_likelihood = laplace_likelihood * gaussian_likelihood
         
-        # if self.truncated:
-        #     upper_gaussian = (self.upper_bound - exp_centroid) / sigma
-        #     lower_gaussian = (self.lower_bound - exp_centroid) / sigma
-        #     gaussian_truncation_factor = 1 / (0.5 * (erf(upper_gaussian / np.sqrt(2)) - erf(lower_gaussian / np.sqrt(2))))
+        if self.truncated:
+            upper_gaussian = (self.upper_bound - exp_centroid) / sigma
+            lower_gaussian = (self.lower_bound - exp_centroid) / sigma
+            gaussian_truncation_factor = 1 / (0.5 * (erf(upper_gaussian / np.sqrt(2)) - erf(lower_gaussian / np.sqrt(2))))
 
-        #     upper_laplace = (self.upper_bound - exp) / b
-        #     lower_laplace = (self.lower_bound - exp) / b
-        #     laplace_truncation_factor = 1 / (0.5 * (erf(upper_laplace / np.sqrt(2)) - erf(lower_laplace / np.sqrt(2))))
-            
-        #     raw_likelihood *= gaussian_truncation_factor * laplace_truncation_factor
+            raw_likelihood *= gaussian_truncation_factor
 
         # set 10000000000 when raw_likelihood <0 
         raw_likelihood[raw_likelihood <= 0] = 10000000000
@@ -439,8 +439,7 @@ class GaussianNoiseModelIsotope(object):
         total_score += self.replicate_score(model=all_rep_data['model_full_iso'],
                                             exp=all_rep_data['isotope_envelope'],
                                             model_centroid=all_rep_data['model_centroid'],
-                                            exp_centroid=all_rep_data['exp_centroid'],
-                                            sigma=0.3)
+                                            exp_centroid=all_rep_data['exp_centroid'],)
 
         for pep in non_peptides:
             #print(pep.sequence, pep.get_score(), protection_factors)
