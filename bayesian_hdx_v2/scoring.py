@@ -363,7 +363,7 @@ class GaussianNoiseModelIsotope(object):
 
     This model gathers its standard deviation parameters from the individual timepoint objects.
     '''
-    def __init__(self, state, envelope_sigma=0.3, centroid_sigma=0.5, w_envelope = 0.7, w_centroid = 0.3, truncated=False, bounds=(None, None)):
+    def __init__(self, state, envelope_sigma=0.3, centroid_sigma=0.5, w_envelope = 1.0, w_centroid = 1.0, truncated=False, bounds=(None, None)):
         
         self.truncated = truncated
         self.state = state
