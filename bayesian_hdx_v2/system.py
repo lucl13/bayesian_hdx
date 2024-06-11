@@ -579,6 +579,7 @@ class State(object):
         }
 
         all_rep_data['exp_centroid'] = np.dot(np.arange(20), all_rep_data['isotope_envelope'].T)
+        all_rep_data['t0_centroid'] = np.dot(np.arange(20), all_rep_data['t0_p_D'].T)
 
         return all_rep_data
 

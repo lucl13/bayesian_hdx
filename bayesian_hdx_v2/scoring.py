@@ -531,7 +531,7 @@ def compute_event_probabilities(deuterations):
 def calculate_model_full_iso(all_rep_data):
     # Calculate raw deuteration levels
     raw_deuteration =all_rep_data['residue_incorporations'] * all_rep_data['max_d'] / all_rep_data['num_observable_amides']
-    model_centroid = np.sum(raw_deuteration, axis=1)
+    model_centroid = np.sum(raw_deuteration, axis=1) + all_rep_data['t0_centroid']
 
     p_D_array = compute_event_probabilities(raw_deuteration)
     
