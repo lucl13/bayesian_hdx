@@ -216,7 +216,8 @@ class MCSampler(object):
     
     '''
     def __init__(self, sys, initialize=True, 
-                sigma_sample_level=None, 
+                if_sample_centroid_sigma=False,
+                if_sample_envelope_sigma=False,
                 pct_moves=25, 
                 accept_range=(0.3, 0.8)):
         # Ensure that all states in system has a dataset and a model and a scoring function
@@ -243,9 +244,11 @@ class MCSampler(object):
             #self.residue_sampler = SampledIntCircular(m.sampler_range())
         elif m.sampler_type == "float":
             raise Exception("Sampler.__init__: Floating point representation for residues is not implemented yet")
-
-        self.sigma_sample_level = sigma_sample_level
-        self.sigma_sampler = SampledFloat(0.1, 20, 0.05)
+        
+        self.if_sample_centroid_sigma = if_sample_centroid_sigma
+        self.if_sample_envelope_sigma = if_sample_envelope_sigma
+        self.centroid_sigma_sampler = SampledFloat(0.1, 2, 0.05)
+        self.envelope_sigma_sampler = SampledFloat(0.1, 1, 0.05)
         self.pct_moves = pct_moves
         self.acceptance_range = accept_range
         # Recalculates all sectors and timepoint data.
@@ -655,9 +658,9 @@ class MCSampler(object):
 
 
             # Now sample the sigma values if we are doing that
-            if self.sigma_sample_level is not None:
-                for d in state.data:
-                    self.sample_sigma(state, temperature)
+            if self.if_sample_centroid_sigma or self.if_sample_envelope_sigma:
+                # for d in state.data:
+                self.sample_sigma(state, 0.01)
 
             # Recalculate the state score and add it to the total score
             final_state_score = state.calculate_peptides_score(state.get_all_peptides(), state.output_model.get_current_model())
@@ -690,71 +693,35 @@ class MCSampler(object):
     def sample_sigma(self, state, temperature):
         # Sample the sigma values in this dataset.
         # Returns the acceptance boolean
-        for dataset in state.data:
 
-            init_score = state.get_score()
+        # centroid sigma
+        if self.if_sample_centroid_sigma:
+            init_score = state.calculate_peptides_score(state.get_all_peptides(), state.output_model.get_current_model())
+            init_sigma = deepcopy(state.scoring_function.forward_model.centroid_sigma)
+            new_sigma = self.centroid_sigma_sampler.propose_move(init_sigma)
 
-            if self.sigma_sample_level == "dataset":
+            state.scoring_function.forward_model.centroid_sigma = new_sigma
+            new_score = state.calculate_peptides_score(state.get_all_peptides(), state.output_model.get_current_model())
 
-                init_score = state.calculate_peptides_score(dataset.get_peptides(), state.output_model.get_current_model())
-                
-                init_sigma = deepcopy(dataset.get_peptides()[0].get_timepoints()[0].get_sigma())
-                new_sigma = self.sigma_sampler.propose_move(init_sigma)
+            if not metropolis_criteria(init_score, new_score, temperature):
+                # Reset the sigma back to the original one
+                state.scoring_function.forward_model.centroid_sigma = init_sigma
+                state.set_score(init_score)
 
-                dataset.set_sigma(new_sigma)
-                new_score = state.calculate_peptides_score(dataset.get_peptides(), state.output_model.get_current_model())
+        # envelope sigma
+        if self.if_sample_envelope_sigma:
+            init_score = state.calculate_peptides_score(state.get_all_peptides(), state.output_model.get_current_model())
+            init_sigma = deepcopy(state.scoring_function.forward_model.envelope_sigma)
+            new_sigma = self.envelope_sigma_sampler.propose_move(init_sigma)
 
-                if not metropolis_criteria(init_score, new_score, temperature):
-                    # Reset the sigma back to the original one
-                    dataset.set_sigma(init_sigma)
-                    # do we need to reset the scores then????
-                    state.set_score(init_score)
+            state.scoring_function.forward_model.envelope_sigma = new_sigma
+            new_score = state.calculate_peptides_score(state.get_all_peptides(), state.output_model.get_current_model())
 
-            elif self.sigma_sample_level == "peptide":
+            if not metropolis_criteria(init_score, new_score, temperature):
+                # Reset the sigma back to the original one
+                state.scoring_function.forward_model.envelope_sigma = init_sigma
+                state.set_score(init_score)
 
-                # For each peptide, only need to calculate the score for each peptide
-                for pep in dataset.get_peptides():
-        
-                    init_score = state.calculate_peptides_score([pep], state.output_model.get_current_model())
-                    init_sigma = deepcopy(pep.sigma)
-                    new_sigma = self.sigma_sampler.propose_move(init_sigma)
-                    pep.set_sigma(new_sigma)
-                    new_score = state.calculate_peptides_score([pep], state.output_model.get_current_model())
-                    if not metropolis_criteria(init_score, new_score, temperature):
-                        # Reset the sigma back to the original one
-                        pep.set_sigma(init_sigma)
-                        # do we need to reset the scores then????
-
-            elif self.sigma_sample_level == "timepoint":
-                for pep in dataset.get_peptides():
-                    
-                    t0_p_D = pep.best_t0_replicate.isotope_envelope # non-deuterated isotope distribution
-
-                    for tp in pep.get_timepoints():
-
-                        init_sigma = deepcopy(tp.get_sigma())
-                        tp_model_deut = tp.model_deuteration # * 100
-
-                        # model isotope distribution
-                        mpdel_p_D = tools.event_probabilities(tp_model_deut) # deturium isotope distribution
-                        mpdel_full_iso = np.convolve(mpdel_p_D, t0_p_D) # full heavy isotope distribut
-
-                        init_score = 0
-                        for rep in tp.get_replicates():
-                            #init_score += state.scoring_function.forward_model.replicate_score(tp_model_deut, rep.deut, init_sigma)
-                            
-                            exp_isotope_envelope = rep.isotope_envelope
-                            init_score += state.scoring_function.forward_model.replicate_score(mpdel_full_iso, exp_isotope_envelope, init_sigma)
-
-                        new_sigma = self.sigma_sampler.propose_move(init_sigma)
-                        new_score = 0
-                        for rep in tp.get_replicates():
-                            exp_isotope_envelope = rep.isotope_envelope
-                            new_score += state.scoring_function.forward_model.replicate_score(mpdel_full_iso, exp_isotope_envelope, new_sigma)
-
-                        if metropolis_criteria(init_score, new_score, temperature):
-                            tp.set_sigma(new_sigma)
-                            tp.set_score(new_score)
 
 def benchmark(model, sample_sigma):
     import time
