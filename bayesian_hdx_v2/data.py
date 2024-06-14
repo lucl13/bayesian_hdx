@@ -599,6 +599,9 @@ class Peptide(object):
         for tp in self.get_timepoints():
             tp.set_sigma(sigma)
 
+    def set_back_exchange(self, value):
+        self.back_exchange = value
+
 class Timepoint(object):
     '''
     Timepoint objects are bound to a specific Fragment, where Timepoint represents

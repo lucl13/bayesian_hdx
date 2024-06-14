@@ -433,6 +433,7 @@ class GaussianNoiseModelIsotope(object):
         #print("PEP:", len(peptides), len(non_peptides))
         
         all_rep_data = self.state.all_rep_data
+        all_rep_data['max_d'] = self._prepare_max_d(peptides)
         all_rep_data['residue_incorporations'] = self._prepare_residue_incorporations_data(peptides)
         all_rep_data['model_centroid'], all_rep_data['model_full_iso'] = calculate_model_full_iso(all_rep_data)
 
@@ -473,6 +474,20 @@ class GaussianNoiseModelIsotope(object):
                     res_incorp.append(model_tp_raw_deut)
         
         return np.array(res_incorp).reshape(-1, 20)
+    
+    def _prepare_max_d(self, peptides):
+        
+        d = self.state.data[0]
+
+        max_d = []
+
+        for pep in peptides:
+            for tp in [tp for tp in pep.get_timepoints() if tp.time != 0]:
+                for rep in tp.get_replicates():
+                    pep_max_d = pep.num_observable_amides * (1-pep.back_exchange)
+                    max_d.append(tools.custom_pad(np.array([pep_max_d]), 20, pep_max_d))
+        
+        return np.array(max_d)
 
 
     def evaluate(self, model, peptides):

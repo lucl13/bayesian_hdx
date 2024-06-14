@@ -629,6 +629,10 @@ def refine_dataset(dataset):
     # step2: calculate the average intensity for each timepoint
     for pep in dataset.peptides:
         pep.get_best_charge_state()
+
+    for pep in dataset.peptides:
+        back_exchange = 1 - pep.max_d/pep.num_observable_amides
+        pep.set_back_exchange(back_exchange)
         
     for tp in dataset.get_all_timepoints():
         sigma = get_iso_sigma(tp, loss='AE')

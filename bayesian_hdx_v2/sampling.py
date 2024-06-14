@@ -218,6 +218,7 @@ class MCSampler(object):
     def __init__(self, sys, initialize=True, 
                 if_sample_centroid_sigma=False,
                 if_sample_envelope_sigma=False,
+                if_sample_back_exchange=False,
                 pct_moves=25, 
                 accept_range=(0.3, 0.8)):
         # Ensure that all states in system has a dataset and a model and a scoring function
@@ -247,8 +248,10 @@ class MCSampler(object):
         
         self.if_sample_centroid_sigma = if_sample_centroid_sigma
         self.if_sample_envelope_sigma = if_sample_envelope_sigma
+        self.if_sample_back_exchange = if_sample_back_exchange
         self.centroid_sigma_sampler = SampledFloat(0.1, 2, 0.05)
         self.envelope_sigma_sampler = SampledFloat(0.1, 1, 0.05)
+        self.back_exchange_sampler = SampledFloat(0.0, 0.4, 0.05)
         self.pct_moves = pct_moves
         self.acceptance_range = accept_range
         # Recalculates all sectors and timepoint data.
@@ -662,6 +665,9 @@ class MCSampler(object):
                 # for d in state.data:
                 self.sample_sigma(state, 0.01)
 
+            if self.if_sample_back_exchange:
+                self.sample_back_exchange(state, 0.01)
+
             # Recalculate the state score and add it to the total score
             final_state_score = state.calculate_peptides_score(state.get_all_peptides(), state.output_model.get_current_model())
             state.set_score(final_state_score)
@@ -722,6 +728,23 @@ class MCSampler(object):
                 state.scoring_function.forward_model.envelope_sigma = init_sigma
                 state.set_score(init_score)
 
+
+    def sample_back_exchange(self, state, temperature):
+        # Sample the back exchange values in this dataset.
+        # Returns the acceptance boolean
+
+        for pep in state.get_all_peptides():
+            init_score = state.calculate_peptides_score(state.get_all_peptides(), state.output_model.get_current_model())
+            init_back_exchange = deepcopy(pep.back_exchange)
+            new_back_exchange = self.back_exchange_sampler.propose_move(init_back_exchange)
+
+            pep.back_exchange = new_back_exchange
+            new_score = state.calculate_peptides_score(state.get_all_peptides(), state.output_model.get_current_model())
+
+            if not metropolis_criteria(init_score, new_score, temperature):
+                # Reset the back exchange back to the original one
+                pep.back_exchange = init_back_exchange
+                state.set_score(init_score)
 
 def benchmark(model, sample_sigma):
     import time
