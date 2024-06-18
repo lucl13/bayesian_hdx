@@ -405,7 +405,7 @@ class State(object):
             if change_tp_deut:   
                 for pep in d.get_peptides_with_residue(residue_number):
                     for tp in pep.get_timepoints():
-                        old_inc = tp.model_deuteration
+                        #old_inc = tp.model_deuteration
                         #tp.model_deuteration += delta[tp.time]
                         tp.model_deuteration += delta[tp.time]
                         #print("  >>", pep.sequence, new_val, tp.time, "|||", old_inc, delta[tp.time], tp.model_deuteration)
@@ -575,6 +575,8 @@ class State(object):
             'time': all_data[:, 3],
             'max_d': all_data[:, 4],
             'isotope_envelope': all_data[:, 5],
+            'peptide_id': np.array([pep.id for pep in peptides for tp in pep.get_timepoints() for rep in tp.get_replicates() if tp.time != 0]),
+            'rep_score': np.full((all_data.shape[0],), 1000.0, dtype=np.float32),
             # 'residue_incorporations': all_data[:, 6]
         }
 

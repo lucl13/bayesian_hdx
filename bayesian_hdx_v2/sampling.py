@@ -18,6 +18,7 @@ from bayesian_hdx_v2 import tools
 from tqdm import tqdm
 import MDAnalysis
 import numpy as np
+import random
 
 # if exp(-diff/temp) > rand: accept
 
@@ -460,7 +461,7 @@ class MCSampler(object):
                 score, model_avg_str, acceptance = self.run_one_step(temperature, write_all)
             acceptance_total += acceptance
             if i%50 == 0:
-                print("Step %i, %0.1f | %s, %0.2f" % (i, score, model_avg_str, acceptance))
+                tqdm.write(f"Step {i}, {score:.1f} | {model_avg_str}, {acceptance:.2f}")
 
             if write:
                 for s in range(len(self.states)):
@@ -470,7 +471,7 @@ class MCSampler(object):
                     else:
                         model = st.output_model.get_model()
 
-                    output.write_model_to_file(output_files[s], st, model, st.score, acceptance, sigmas=True)
+                    output.write_model_to_file(output_files[s], st, model, st.score, acceptance, sigmas=False)
 
         acceptance_ratio = acceptance_total/NSTEPS
         print("Average acceptance ratio for this run = ", acceptance_ratio, " |  Temp = ", temperature)
@@ -577,7 +578,8 @@ class MCSampler(object):
         for state in self.states:
 
             init_model = deepcopy(state.output_model.model)
-            init_score = state.get_score()
+            # init_score = state.get_score()
+            # init_rep_score = deepcopy(state.all_rep_data['rep_score'])
 
             ###########################
             # This should be movable particles
@@ -602,6 +604,8 @@ class MCSampler(object):
                     # Get the current values for these residues
                     oldval1 = int(state.output_model.get_model_residue(r1))
                     oldval2 = int(state.output_model.get_model_residue(r2))
+                    oldscore = state.get_score()
+                    old_rep_score = deepcopy(state.all_rep_data['rep_score'])
 
                     # Swap the values
                     state.output_model.change_residue(r1, oldval2)
@@ -614,7 +618,7 @@ class MCSampler(object):
                     state.set_score(newscore)
 
                     # Decide whether to accept the swap
-                    accept = metropolis_criteria(init_score, newscore, 0.01)
+                    accept = metropolis_criteria(oldscore, newscore, 0.01)
 
                     if not accept:
                         # Revert the swap if not accepted
@@ -622,9 +626,8 @@ class MCSampler(object):
                         state.output_model.change_residue(r2, oldval2)
                         state.change_single_residue_incorporation(r1, oldval1)
                         state.change_single_residue_incorporation(r2, oldval2)
-                        state.set_score(init_score)
-                    else:
-                        init_score = newscore  # Update initial score for next iteration
+                        state.set_score(oldscore)
+                        state.all_rep_data['rep_score'] = old_rep_score
 
 
             for r in resis[:flips]:
@@ -634,6 +637,7 @@ class MCSampler(object):
                 oldval = int(state.output_model.get_model_residue(r))
                 # Propose a new value given the current state
                 oldscore = state.get_score()
+                old_rep_score = deepcopy(state.all_rep_data['rep_score'])
                 #print(r, oldval, oldscore, state.output_model.get_model())
                 newval = self.residue_sampler.propose_move(oldval) 
 
@@ -649,6 +653,7 @@ class MCSampler(object):
                     state.output_model.change_residue(r, oldval)
                     state.change_single_residue_incorporation(r, oldval)
                     state.set_score(oldscore)
+                    state.all_rep_data['rep_score'] = old_rep_score
 
             # Determine the total number of moves performed
             flips2=0
@@ -663,10 +668,12 @@ class MCSampler(object):
             # Now sample the sigma values if we are doing that
             if self.if_sample_centroid_sigma or self.if_sample_envelope_sigma:
                 # for d in state.data:
-                self.sample_sigma(state, 0.01)
+                if random.random() < 0.2:
+                    self.sample_sigma(state, 0.01)
 
             if self.if_sample_back_exchange:
-                self.sample_back_exchange(state, 0.01)
+                if random.random() < 0.2:
+                    self.sample_back_exchange(state, 0.01)
 
             # Recalculate the state score and add it to the total score
             final_state_score = state.calculate_peptides_score(state.get_all_peptides(), state.output_model.get_current_model())
@@ -733,18 +740,22 @@ class MCSampler(object):
         # Sample the back exchange values in this dataset.
         # Returns the acceptance boolean
 
+        #random_peptides = random.sample(state.get_all_peptides(),  int(len(state.get_all_peptides()) * self.pct_moves / 100))
+
         for pep in state.get_all_peptides():
-            init_score = state.calculate_peptides_score(state.get_all_peptides(), state.output_model.get_current_model())
+            init_score = state.calculate_peptides_score([pep], state.output_model.get_current_model())
+            init_rep_score = deepcopy(state.all_rep_data['rep_score'])
             init_back_exchange = deepcopy(pep.back_exchange)
             new_back_exchange = self.back_exchange_sampler.propose_move(init_back_exchange)
 
             pep.back_exchange = new_back_exchange
-            new_score = state.calculate_peptides_score(state.get_all_peptides(), state.output_model.get_current_model())
+            new_score = state.calculate_peptides_score([pep], state.output_model.get_current_model())
 
             if not metropolis_criteria(init_score, new_score, temperature):
                 # Reset the back exchange back to the original one
                 pep.back_exchange = init_back_exchange
                 state.set_score(init_score)
+                state.all_rep_data['rep_score'] = init_rep_score
 
 def benchmark(model, sample_sigma):
     import time

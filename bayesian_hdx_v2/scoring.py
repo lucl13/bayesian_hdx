@@ -403,9 +403,10 @@ class GaussianNoiseModelIsotope(object):
         # set 10000000000 when raw_likelihood <0 
         raw_likelihood[raw_likelihood <= 0] = 10000000000
 
-        total_score = np.sum(-1*np.log(raw_likelihood))        
+        rep_score = -1*np.log(raw_likelihood)
+        # total_score = np.sum(rep_score)
         
-        return total_score
+        return rep_score
     
 
     def peptide_confidence_score(self, peptide):
@@ -421,73 +422,54 @@ class GaussianNoiseModelIsotope(object):
         a susbset of peptides.
         '''
         self.state.calculate_residue_incorporation(protection_factors)
-        
-        total_score = 0
+
         if peptides is None:
-            # peptides are the ones that we recalculate
-            peptides = self.state.get_all_peptides()
-            non_peptides = []
-        else:
-            # non_peptides are the ones where we simply read the score from last time (didn't change)
-            non_peptides = list(set(self.state.get_all_peptides())-set(peptides))
-        #print("PEP:", len(peptides), len(non_peptides))
-        
+            peptides = self.state.get_all_peptides()  # If no peptides provided, use all
+
+        # Calculate indices for peptides to be scored
+        peptides_ids = [pep.id for pep in peptides]
         all_rep_data = self.state.all_rep_data
-        all_rep_data['max_d'] = self._prepare_max_d(peptides)
-        all_rep_data['residue_incorporations'] = self._prepare_residue_incorporations_data(peptides)
-        all_rep_data['model_centroid'], all_rep_data['model_full_iso'] = calculate_model_full_iso(all_rep_data)
+        peptides_rep_indices = np.isin(all_rep_data['peptide_id'], peptides_ids)
+        
+        # Prepare data for only the affected peptides
+        all_rep_data['residue_incorporations'], all_rep_data['max_d'] = self._prepare_residue_incorporations_data(peptides)
+        all_rep_data['model_centroid'], all_rep_data['model_full_iso'] = calculate_model_full_iso(all_rep_data, peptides_rep_indices)
 
-        total_score += self.replicate_score(model=all_rep_data['model_full_iso'],
-                                            exp=all_rep_data['isotope_envelope'],
-                                            model_centroid=all_rep_data['model_centroid'],
-                                            exp_centroid=all_rep_data['exp_centroid'],)
+        # Calculate score for updated peptides
+        rep_score = self.replicate_score(
+            model=all_rep_data['model_full_iso'],
+            exp=all_rep_data['isotope_envelope'][peptides_rep_indices],
+            model_centroid=all_rep_data['model_centroid'],
+            exp_centroid=all_rep_data['exp_centroid'][peptides_rep_indices]
+        )
 
-        for pep in non_peptides:
-            #print(pep.sequence, pep.get_score(), protection_factors)
-            total_score += pep.get_score()
+        all_rep_data['rep_score'][peptides_rep_indices] = rep_score
+        total_score = np.sum(all_rep_data['rep_score'])  # Sum of all scores
 
         self.total_score = total_score
-        #print(total_score)
         return total_score
 
 
     def _prepare_residue_incorporations_data(self, peptides):
-        
         d = self.state.data[0]
-
         res_incorp = []
-
-        for pep in peptides:
-
-            observable_residues = pep.get_observable_residue_numbers()
-
-            for tp in [tp for tp in pep.get_timepoints() if tp.time != 0]:
-
-                model_tp_raw_deut = []
-                for r in observable_residues:
-                    model_tp_raw_deut.append(self.state.residue_incorporations[d][r][tp.time])
-                
-                model_tp_raw_deut = tools.custom_pad(numpy.array(model_tp_raw_deut), 20, 0.0)
-
-                for rep in tp.get_replicates(): 
-                
-                    res_incorp.append(model_tp_raw_deut)
-        
-        return np.array(res_incorp).reshape(-1, 20)
-    
-    def _prepare_max_d(self, peptides):
-        
-        d = self.state.data[0]
-
         max_d = []
 
         for pep in peptides:
-            for tp in [tp for tp in pep.get_timepoints() if tp.time != 0]:
-                for rep in tp.get_replicates():
-                    pep_max_d = pep.num_observable_amides * (1-pep.back_exchange)
-                    max_d.append(tools.custom_pad(np.array([pep_max_d]), 20, pep_max_d))
-        
-        return np.array(max_d)
+            observable_residues = pep.get_observable_residue_numbers()
+            pep_max_d = pep.num_observable_amides * (1 - pep.back_exchange)
+            padded_max_d = tools.custom_pad(np.array([pep_max_d]), 20, pep_max_d)
+
+            for tp in pep.get_timepoints():
+                if tp.time != 0:
+                    model_tp_raw_deut = [self.state.residue_incorporations[d][r][tp.time] for r in observable_residues]
+                    model_tp_raw_deut = tools.custom_pad(np.array(model_tp_raw_deut), 20, 0.0)
+
+                    replicates = len(tp.get_replicates())
+                    res_incorp.extend([model_tp_raw_deut] * replicates)
+                    max_d.extend([padded_max_d] * replicates)
+
+        return np.array(res_incorp).reshape(-1, 20), np.array(max_d)
 
 
     def evaluate(self, model, peptides):
@@ -543,10 +525,10 @@ def compute_event_probabilities(deuterations):
 
 
 
-def calculate_model_full_iso(all_rep_data):
+def calculate_model_full_iso(all_rep_data, rep_indices):
     # Calculate raw deuteration levels
-    raw_deuteration =all_rep_data['residue_incorporations'] * all_rep_data['max_d'] / all_rep_data['num_observable_amides']
-    model_centroid = np.sum(raw_deuteration, axis=1) + all_rep_data['t0_centroid']
+    raw_deuteration =all_rep_data['residue_incorporations'] * all_rep_data['max_d'] / all_rep_data['num_observable_amides'][rep_indices]
+    model_centroid = np.sum(raw_deuteration, axis=1) + all_rep_data['t0_centroid'][rep_indices]
 
     p_D_array = compute_event_probabilities(raw_deuteration)
     

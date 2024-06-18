@@ -8,6 +8,7 @@ import numpy.random
 import pandas as pd
 import math
 from hdxrate import k_int_from_sequence
+import uuid
 
 def calculate_percent_d(dataset):
     # Calculates the averaged %D over all timepoints in a peptide.
@@ -431,7 +432,7 @@ class Peptide(object):
     """
     def __init__(self, dataset, sequence, start_residue, peptide_id, charge_state=None, sigma=5.0, retention_time=None):
         self.set_dataset(dataset)
-        self.id = peptide_id
+        self.id = str(uuid.uuid4())
         self.sequence = sequence
         self.timepoints = []
         self.start_residue = int(start_residue)

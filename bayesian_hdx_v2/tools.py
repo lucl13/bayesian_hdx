@@ -630,7 +630,7 @@ def refine_dataset(dataset):
     for pep in dataset.peptides:
         pep.get_best_charge_state()
 
-    for pep in dataset.peptides:
+        # back exchange
         back_exchange = 1 - pep.max_d/pep.num_observable_amides
         pep.set_back_exchange(back_exchange)
         
@@ -755,10 +755,15 @@ def custom_pad(array, target_length, pad_value=1e-10):
     if len(array) >= target_length:
         padded_array = array[:target_length].astype(np.float64)
         return padded_array
-    #replace 0s with a small value
-    array[array == 0] = pad_value
+    
     padded_array = np.full(target_length, pad_value, dtype=np.float64)
-    padded_array[:len(array)] = array 
+    
+    for i in range(len(array)):
+        if array[i] == 0:
+            padded_array[i] = pad_value
+        else:
+            padded_array[i] = array[i]
+    
     return padded_array
 
 
