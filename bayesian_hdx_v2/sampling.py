@@ -252,7 +252,7 @@ class MCSampler(object):
         self.if_sample_back_exchange = if_sample_back_exchange
         self.centroid_sigma_sampler = SampledFloat(0.1, 2, 0.05)
         self.envelope_sigma_sampler = SampledFloat(0.1, 1, 0.05)
-        self.back_exchange_sampler = SampledFloat(0.0, 0.4, 0.05)
+        self.back_exchange_sampler = SampledFloat(0.0, 0.5, 0.05)
         self.pct_moves = pct_moves
         self.acceptance_range = accept_range
         # Recalculates all sectors and timepoint data.
@@ -578,8 +578,6 @@ class MCSampler(object):
         for state in self.states:
 
             init_model = deepcopy(state.output_model.model)
-            # init_score = state.get_score()
-            # init_rep_score = deepcopy(state.all_rep_data['rep_score'])
 
             ###########################
             # This should be movable particles
@@ -605,7 +603,7 @@ class MCSampler(object):
                     oldval1 = int(state.output_model.get_model_residue(r1))
                     oldval2 = int(state.output_model.get_model_residue(r2))
                     oldscore = state.get_score()
-                    old_rep_score = deepcopy(state.all_rep_data['rep_score'])
+                    old_rep_score = state.all_rep_data['rep_score'].copy()
 
                     # Swap the values
                     state.output_model.change_residue(r1, oldval2)
@@ -637,7 +635,7 @@ class MCSampler(object):
                 oldval = int(state.output_model.get_model_residue(r))
                 # Propose a new value given the current state
                 oldscore = state.get_score()
-                old_rep_score = deepcopy(state.all_rep_data['rep_score'])
+                old_rep_score = state.all_rep_data['rep_score'].copy()
                 #print(r, oldval, oldscore, state.output_model.get_model())
                 newval = self.residue_sampler.propose_move(oldval) 
 
@@ -710,7 +708,7 @@ class MCSampler(object):
         # centroid sigma
         if self.if_sample_centroid_sigma:
             init_score = state.calculate_peptides_score(state.get_all_peptides(), state.output_model.get_current_model())
-            init_sigma = deepcopy(state.scoring_function.forward_model.centroid_sigma)
+            init_sigma = state.scoring_function.forward_model.centroid_sigma
             new_sigma = self.centroid_sigma_sampler.propose_move(init_sigma)
 
             state.scoring_function.forward_model.centroid_sigma = new_sigma
@@ -724,7 +722,7 @@ class MCSampler(object):
         # envelope sigma
         if self.if_sample_envelope_sigma:
             init_score = state.calculate_peptides_score(state.get_all_peptides(), state.output_model.get_current_model())
-            init_sigma = deepcopy(state.scoring_function.forward_model.envelope_sigma)
+            init_sigma = state.scoring_function.forward_model.envelope_sigma
             new_sigma = self.envelope_sigma_sampler.propose_move(init_sigma)
 
             state.scoring_function.forward_model.envelope_sigma = new_sigma
@@ -744,8 +742,8 @@ class MCSampler(object):
 
         for pep in state.get_all_peptides():
             init_score = state.calculate_peptides_score([pep], state.output_model.get_current_model())
-            init_rep_score = deepcopy(state.all_rep_data['rep_score'])
-            init_back_exchange = deepcopy(pep.back_exchange)
+            init_rep_score = state.all_rep_data['rep_score'].copy()
+            init_back_exchange = pep.back_exchange
             new_back_exchange = self.back_exchange_sampler.propose_move(init_back_exchange)
 
             pep.back_exchange = new_back_exchange
