@@ -90,10 +90,10 @@ def import_HXcolumns(infile, sequence, name="Data", percentD=False, conditions=N
         time = float(fields[column_headers.index("time")])
         deut = float(fields[column_headers.index("D_inc")])
         # if no unique_id, set to ''
-        if "unique_id" not in column_headers:
-            unique_id = None
+        if "timepoint_unique_id" not in column_headers:
+            timepoint_unique_id = None
         else:
-            unique_id = fields[column_headers.index("unique_id")].strip()
+            timepoint_unique_id = fields[column_headers.index("timepoint_unique_id")].strip()
         #print("-----", start_res, column_headers.index("start_res"), offset, line)
         if fields[column_headers.index("charge_state")] == "None":
             charge_state = None
@@ -131,7 +131,7 @@ def import_HXcolumns(infile, sequence, name="Data", percentD=False, conditions=N
      
                 # add the deuteration value as a replicate.
                 # Any other replicate information from the file should be added at this step.
-                tp.add_replicate(deut, score=score,charge_state=charge_state, max_d=max_d, unique_id=unique_id)
+                tp.add_replicate(deut, score=score,charge_state=charge_state, max_d=max_d, unique_id=timepoint_unique_id)
                 
             new_peptide.add_timepoint(time)
 
@@ -694,6 +694,14 @@ class Output(object):
         f.write(sec_string +"\n")
         f.write(cov_string +"\n")
         f.write("\n")
+
+        f.write("!!! Peptide identifiers \n")
+        pep_string = "!! "
+        for pep in state.get_all_peptides():
+            pep_string += pep.id + "|"
+        f.write(pep_string + "\n")
+        f.write("\n")
+
         f.write("grid_size : " + str(state.output_model.grid_size) + "\n")
         # Protection Factor Grids
         f.write("$$$ Residue PF Grids\n")     
@@ -744,7 +752,7 @@ class Output(object):
     def get_output_file(self, state):
         return self.output_directory+"/models_scores_sigmas-" + state.name +".dat"
 
-    def write_model_to_file(self, f, state, model, score, acceptance, sigmas=True):
+    def write_model_to_file(self, f, state, model, score, acceptance, sigmas=True, back_exchange=False):
 
         outstring = "> "
         for i in model:
@@ -756,6 +764,10 @@ class Output(object):
                 for tp in d.get_all_timepoints():
                     outstring += str(tp.get_sigma()) + " "
 
+        if back_exchange:
+            for d in state.data:
+                for pep in d.get_peptides():
+                        outstring += str(pep.back_exchange) + " "
         f.write(outstring + "\n")
 
 

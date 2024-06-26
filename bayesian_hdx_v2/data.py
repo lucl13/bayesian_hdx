@@ -237,7 +237,7 @@ class Dataset(object):
             sigma = self.sigma
 
         if peptide_id is None:
-            peptide_id = str(len(self.peptides))
+            peptide_id = f"{start_residue}-{start_residue+len(sequence)-1} {sequence}"
         new_peptide = Peptide(self, sequence, start_residue, peptide_id, 
                         sigma=sigma, 
                         charge_state=charge_state, 
@@ -432,7 +432,7 @@ class Peptide(object):
     """
     def __init__(self, dataset, sequence, start_residue, peptide_id, charge_state=None, sigma=5.0, retention_time=None):
         self.set_dataset(dataset)
-        self.id = str(uuid.uuid4())
+        self.id = peptide_id
         self.sequence = sequence
         self.timepoints = []
         self.start_residue = int(start_residue)
@@ -800,7 +800,7 @@ def merge_mutiple_datasets(datasets_list):
         for pep in dataset.peptides:
             
             pep.set_dataset(merged_datasets)
-            new_peptide = merged_datasets.create_peptide(pep.sequence, pep.start_residue,)
+            new_peptide = merged_datasets.create_peptide(pep.sequence, pep.start_residue,peptide_id=pep.id)
             new_peptide.max_d = pep.max_d
 
             if new_peptide is not None:
@@ -851,7 +851,7 @@ def spilt_dataset_into_chunks(dataset, chunk_size=100):
         for pep in dataset.peptides:
             if (start <= pep.start_residue <= end) or (start <= pep.end_residue <= end):
                 pep.set_dataset(chunked_dataset)
-                new_peptide = chunked_dataset.create_peptide(pep.sequence, pep.start_residue,)
+                new_peptide = chunked_dataset.create_peptide(pep.sequence, pep.start_residue, peptide_id=pep.id)
                 new_peptide.max_d = pep.max_d
 
                 if new_peptide is not None:

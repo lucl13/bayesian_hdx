@@ -471,7 +471,7 @@ class MCSampler(object):
                     else:
                         model = st.output_model.get_model()
 
-                    output.write_model_to_file(output_files[s], st, model, st.score, acceptance, sigmas=False)
+                    output.write_model_to_file(output_files[s], st, model, st.score, acceptance, sigmas=False, back_exchange=True)
 
         acceptance_ratio = acceptance_total/NSTEPS
         print("Average acceptance ratio for this run = ", acceptance_ratio, " |  Temp = ", temperature)
