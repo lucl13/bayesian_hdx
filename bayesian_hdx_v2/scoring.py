@@ -363,7 +363,7 @@ class GaussianNoiseModelIsotope(object):
 
     This model gathers its standard deviation parameters from the individual timepoint objects.
     '''
-    def __init__(self, state, envelope_sigma=0.3, centroid_sigma=0.5, w_envelope = 1.0, w_centroid = 1.0, truncated=False, bounds=(None, None)):
+    def __init__(self, state, envelope_sigma=0.3, centroid_sigma=0.5, w_envelope = 1.0, w_centroid = 1.0, truncated=False, bounds=(None, None), time_window=(None, None)):
         
         self.truncated = truncated
         self.state = state
@@ -372,6 +372,7 @@ class GaussianNoiseModelIsotope(object):
 
         self.w_envelope = w_envelope
         self.w_centroid = w_centroid
+        self.time_window = time_window
 
         if truncated:
             self.upper_bound = bounds[1] if bounds[1] is not None else 10
@@ -383,9 +384,12 @@ class GaussianNoiseModelIsotope(object):
 
     def replicate_score(self, model=None, exp=None, model_centroid=None, exp_centroid=None):
 
-        sum_ae = np.abs(model - exp).sum(axis=1)
+        #sum_ae = np.abs(model - exp).sum(axis=1)
+        se = (model - exp) ** 2
+        sse = np.sum(se, axis=1)
+        envelope_likelihood = np.exp(-(sse) / (2 * self.envelope_sigma ** 2)) / (self.envelope_sigma * np.sqrt(2 * np.pi))
 
-        envelope_likelihood = np.exp(-(sum_ae ** 2) / (2 * self.envelope_sigma ** 2)) / (self.envelope_sigma * np.sqrt(2 * np.pi))
+        #envelope_likelihood = np.exp(-(sum_ae ** 2) / (2 * self.envelope_sigma ** 2)) / (self.envelope_sigma * np.sqrt(2 * np.pi))
         
         centroid_likelihood = np.exp(-((model_centroid - exp_centroid) ** 2) / (2 * self.centroid_sigma ** 2)) / (self.centroid_sigma * np.sqrt(2 * np.pi))
     
@@ -432,7 +436,7 @@ class GaussianNoiseModelIsotope(object):
         peptides_rep_indices = np.isin(all_rep_data['peptide_id'], peptides_ids)
         
         # Prepare data for only the affected peptides
-        all_rep_data['residue_incorporations'], all_rep_data['max_d'] = self._prepare_residue_incorporations_data(peptides)
+        all_rep_data['residue_incorporations'], all_rep_data['back_exchange'] = self._prepare_residue_incorporations_data(peptides)
         all_rep_data['model_centroid'], all_rep_data['model_full_iso'] = calculate_model_full_iso(all_rep_data, peptides_rep_indices)
 
         # Calculate score for updated peptides
@@ -442,6 +446,12 @@ class GaussianNoiseModelIsotope(object):
             model_centroid=all_rep_data['model_centroid'],
             exp_centroid=all_rep_data['exp_centroid'][peptides_rep_indices]
         )
+
+        if self.time_window[0] is not None:
+            time_window = self.time_window
+            time_indices = (all_rep_data['time'][:,0] >= time_window[0]) & (all_rep_data['time'][:,0] <= time_window[1])
+            rep_score = rep_score[time_indices]
+            peptides_rep_indices = peptides_rep_indices & time_indices
 
         all_rep_data['rep_score'][peptides_rep_indices] = rep_score
         total_score = np.sum(all_rep_data['rep_score'])  # Sum of all scores
@@ -453,12 +463,11 @@ class GaussianNoiseModelIsotope(object):
     def _prepare_residue_incorporations_data(self, peptides):
         d = self.state.data[0]
         res_incorp = []
-        max_d = []
+        back_exchange = []
 
         for pep in peptides:
             observable_residues = pep.get_observable_residue_numbers()
-            pep_max_d = pep.num_observable_amides * (1 - pep.back_exchange)
-            padded_max_d = tools.custom_pad(np.array([pep_max_d]), 20, pep_max_d)
+            padded_back_exchange = tools.custom_pad(np.array([pep.back_exchange]), 20, pep.back_exchange)
 
             for tp in pep.get_timepoints():
                 if tp.time != 0:
@@ -467,9 +476,9 @@ class GaussianNoiseModelIsotope(object):
 
                     replicates = len(tp.get_replicates())
                     res_incorp.extend([model_tp_raw_deut] * replicates)
-                    max_d.extend([padded_max_d] * replicates)
+                    back_exchange.extend([padded_back_exchange] * replicates)
 
-        return np.array(res_incorp).reshape(-1, 20), np.array(max_d)
+        return np.array(res_incorp).reshape(-1, 20), np.array(back_exchange)
 
 
     def evaluate(self, model, peptides):
@@ -527,7 +536,8 @@ def compute_event_probabilities(deuterations):
 
 def calculate_model_full_iso(all_rep_data, rep_indices):
     # Calculate raw deuteration levels
-    raw_deuteration =all_rep_data['residue_incorporations'] * all_rep_data['max_d'] / all_rep_data['num_observable_amides'][rep_indices]
+    # note： residue_incorporations has already been corrected for saturation
+    raw_deuteration =all_rep_data['residue_incorporations'] * (1 - all_rep_data['back_exchange'][rep_indices])
     model_centroid = np.sum(raw_deuteration, axis=1) + all_rep_data['t0_centroid'][rep_indices]
 
     p_D_array = compute_event_probabilities(raw_deuteration)

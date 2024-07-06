@@ -376,56 +376,44 @@ class MCSampler(object):
         sd = numpy.std(times)
         print("This system will take about ", int(time), "+/-", int(sd*2) , " seconds per 1000 steps")
 
-    def get_acceptable_temperature(self, init_temp, acceptance_range, nsteps=100):
+    def get_acceptable_temperature(self, init_temp, acceptance_range, nsteps=20, alpha=0.85):
         accept = False
-        low = False
-        high = False
-
+        direction = 0  # 0: init, 1: increased, -1: decreased
+        
         orig_pct_moves = self.pct_moves
-        self.pct_moves = 100
-
-        scale = 1.0
+        self.pct_moves = 100 
 
         temp = init_temp
 
         while not accept:
-            acceptance_total=1.0
-            init_temp = temp
+            acceptance_total = 0.0
+
             for i in range(nsteps):
-                #print(i,)
-                score, model_avg, acceptance = self.run_one_step(temp)
-                #print(score, model_avg, acceptance)
+                score, model_avg, acceptance = self.run_one_step_swap(temp)
                 acceptance_total += acceptance
 
-            acceptance_ratio = acceptance_total/nsteps
+            acceptance_ratio = acceptance_total / nsteps
 
             if acceptance_ratio < acceptance_range[0]:
-                # We have an acceptance ratio that is too low. Raise the temperature
-                low = True
-                if high:
-                    # If we were previously too high, raise the divisor by a factor of two    
-                    high = False
-                    scale = scale * 2.0
-                    
-                temp = temp + temp / scale
-
+                # Acceptance ratio too low, need to increase temperature
+                if direction == -1:  # If the last change was a decrease, accelerate the change
+                    alpha *= 0.5
+                temp *= (1 + alpha)
+                direction = 1
             elif acceptance_ratio > acceptance_range[1]:
-                # We have an acceptance ratio that is too high.  Lower the temperature.
-                high = True
-                if low:
-                    # If we were previously too low, raise the divisor by a factor of two                
-                    low = False
-                    scale = scale * 2.0
-
-                temp = temp - temp / scale / 2.0
-
+                # Acceptance ratio too high, need to decrease temperature
+                if direction == 1:  # If the last change was an increase, accelerate the change
+                    alpha *= 0.5
+                temp *= (1 - alpha)
+                direction = -1
             else:
                 accept = True
 
-            print(high, low, accept, scale, init_temp, acceptance_ratio)
-        self.pct_moves = orig_pct_moves
-        return temp
+            print(accept, temp, acceptance_ratio)
 
+        self.pct_moves = orig_pct_moves 
+        self.temperature = temp
+        return temp
 
     def run(self, NSTEPS=100, init_temp=10, write=False, write_all=False, acceptance_range=None, find_temperature=False, 
             if_using_swap=True):
@@ -616,7 +604,8 @@ class MCSampler(object):
                     state.set_score(newscore)
 
                     # Decide whether to accept the swap
-                    accept = metropolis_criteria(oldscore, newscore, 0.01)
+                    # greedy metropolis criteria
+                    accept = metropolis_criteria(oldscore, newscore, 0.0)
 
                     if not accept:
                         # Revert the swap if not accepted
@@ -754,6 +743,58 @@ class MCSampler(object):
                 pep.back_exchange = init_back_exchange
                 state.set_score(init_score)
                 state.all_rep_data['rep_score'] = init_rep_score
+
+
+    def sample_back_exchange_residue_level(self, state, temperature):
+
+        if state.output_model.sample_only_observed_residues:
+            resis = state.observed_residues
+        else:
+            resis = state.get_exchanging_residues()
+
+
+        for r in resis:
+            
+            oldval_pf = int(state.output_model.get_model_residue(r))
+            oldval = int(state.output_model.get_model_back_exchange_residue(r))
+            # Propose a new value given the current state
+            oldscore = state.get_score()
+            old_rep_score = state.all_rep_data['rep_score'].copy()
+            #print(r, oldval, oldscore, state.output_model.get_model())
+            newval = self.back_exchange_sampler.propose_move(oldval)
+
+            # # Change the residue incorporation values in each sector and calculate the new score:
+            state.output_model.model_back_exchange[r-1] = newval
+            # newscore = state.calculate_peptides_score(state.get_all_peptides(), state.output_model.get_current_model())
+            newscore = state.calculate_peptides_score(state.get_all_peptides(), state.output_model.get_current_model(), state.output_model.get_model_back_exchange())
+            state.set_score(newscore)
+
+            accept = metropolis_criteria(oldscore, newscore, temperature)
+
+            if not accept:
+                state.output_model.model_back_exchange[r-1] = oldval
+                state.set_score(oldscore)
+                state.all_rep_data['rep_score'] = old_rep_score
+
+
+    def sample_sidechain_exchange(self, state, temperature):
+
+        for pep in state.get_all_peptides():
+            init_score = state.calculate_peptides_score([pep], state.output_model.get_current_model())
+            init_rep_score = state.all_rep_data['rep_score'].copy()
+            init_sidechain_exchange = pep.sidechain_exchange
+            new_sidechain_exchange = self.sidechain_exchange_sampler.propose_move(init_sidechain_exchange)
+
+            pep.sidechain_exchange = new_sidechain_exchange
+            new_score = state.calculate_peptides_score([pep], state.output_model.get_current_model())
+
+            if not metropolis_criteria(init_score, new_score, temperature):
+                # Reset the sidechain exchange back to the original one
+                pep.sidechain_exchange = init_sidechain_exchange
+                state.set_score(init_score)
+                state.all_rep_data['rep_score'] = init_rep_score
+
+
 
 def benchmark(model, sample_sigma):
     import time
