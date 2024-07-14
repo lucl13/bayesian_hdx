@@ -385,7 +385,13 @@ class GaussianNoiseModelIsotope(object):
     def replicate_score(self, model=None, exp=None, model_centroid=None, exp_centroid=None):
 
         #sum_ae = np.abs(model - exp).sum(axis=1)
-        se = (model - exp) ** 2
+        # se = (model - exp) ** 2
+        # sse = np.sum(se, axis=1)
+
+        mask = exp > 0.1
+        model_filtered = np.where(mask, model, 0)
+        exp_filtered = np.where(mask, exp, 0)
+        se = (model_filtered - exp_filtered) ** 2
         sse = np.sum(se, axis=1)
         envelope_likelihood = np.exp(-(sse) / (2 * self.envelope_sigma ** 2)) / (self.envelope_sigma * np.sqrt(2 * np.pi))
 
@@ -436,7 +442,8 @@ class GaussianNoiseModelIsotope(object):
         peptides_rep_indices = np.isin(all_rep_data['peptide_id'], peptides_ids)
         
         # Prepare data for only the affected peptides
-        all_rep_data['residue_incorporations'], all_rep_data['back_exchange'] = self._prepare_residue_incorporations_data(peptides)
+        #all_rep_data['residue_incorporations'], all_rep_data['back_exchange'] = self._prepare_residue_incorporations_data(peptides)
+        self._prepare_residue_incorporations_data(peptides)
         all_rep_data['model_centroid'], all_rep_data['model_full_iso'] = calculate_model_full_iso(all_rep_data, peptides_rep_indices)
 
         # Calculate score for updated peptides
@@ -464,11 +471,15 @@ class GaussianNoiseModelIsotope(object):
         d = self.state.data[0]
         res_incorp = []
         back_exchange = []
+        sidechain_exchange = []
+        
+        all_rep_data = self.state.all_rep_data
+        mask = all_rep_data['observable_residues'] != 0
 
         for pep in peptides:
             observable_residues = pep.get_observable_residue_numbers()
             padded_back_exchange = tools.custom_pad(np.array([pep.back_exchange]), 20, pep.back_exchange)
-
+            padded_sidechain_exchange = tools.custom_pad(np.array([pep.sidechain_exchange]), 20, pep.sidechain_exchange)
             for tp in pep.get_timepoints():
                 if tp.time != 0:
                     model_tp_raw_deut = [self.state.residue_incorporations[d][r][tp.time] for r in observable_residues]
@@ -477,8 +488,13 @@ class GaussianNoiseModelIsotope(object):
                     replicates = len(tp.get_replicates())
                     res_incorp.extend([model_tp_raw_deut] * replicates)
                     back_exchange.extend([padded_back_exchange] * replicates)
+                    sidechain_exchange.extend([padded_sidechain_exchange] * replicates)
 
-        return np.array(res_incorp).reshape(-1, 20), np.array(back_exchange)
+
+        all_rep_data['residue_incorporations'] = np.array(res_incorp).reshape(-1, 20)
+        all_rep_data['back_exchange'] = np.where(mask, np.array(back_exchange), 0)
+        all_rep_data['sidechain_exchange'] = np.where(mask, np.array(sidechain_exchange), 0) * self.state.data[0].conditions.saturation
+        #return np.array(res_incorp).reshape(-1, 20), np.array(back_exchange), np.array(sidechain_exchange)
 
 
     def evaluate(self, model, peptides):
@@ -537,13 +553,14 @@ def compute_event_probabilities(deuterations):
 def calculate_model_full_iso(all_rep_data, rep_indices):
     # Calculate raw deuteration levels
     # note： residue_incorporations has already been corrected for saturation
-    raw_deuteration =all_rep_data['residue_incorporations'] * (1 - all_rep_data['back_exchange'][rep_indices])
-    model_centroid = np.sum(raw_deuteration, axis=1) + all_rep_data['t0_centroid'][rep_indices]
+    raw_deuteration = (all_rep_data['residue_incorporations'] + all_rep_data['sidechain_exchange'])* (1 - all_rep_data['back_exchange'])
+    #model_centroid = np.sum(raw_deuteration, axis=1) + all_rep_data['t0_centroid'][rep_indices] + all_rep_data['sidechain_exchange']
+    model_centroid = np.sum(raw_deuteration, axis=1) + all_rep_data['t0_centroid'][rep_indices] 
 
     p_D_array = compute_event_probabilities(raw_deuteration)
     
     # Convolve and truncate results
-    model_full_iso = convolve_and_truncate(p_D_array, all_rep_data['t0_p_D'])
+    model_full_iso = convolve_and_truncate(p_D_array, all_rep_data['t0_p_D'][rep_indices])
 
     return model_centroid, model_full_iso
 

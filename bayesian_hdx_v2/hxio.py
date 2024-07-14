@@ -752,7 +752,7 @@ class Output(object):
     def get_output_file(self, state):
         return self.output_directory+"/models_scores_sigmas-" + state.name +".dat"
 
-    def write_model_to_file(self, f, state, model, score, acceptance, sigmas=True, back_exchange=False):
+    def write_model_to_file(self, f, state, model, score, acceptance, sigmas=True, back_exchange=False, sidechain_exchange=False):
 
         outstring = "> "
         for i in model:
@@ -768,6 +768,14 @@ class Output(object):
             for d in state.data:
                 for pep in d.get_peptides():
                         outstring += str(pep.back_exchange) + " "
+
+        outstring += " || "
+
+        if sidechain_exchange:
+            for d in state.data:
+                for pep in d.get_peptides():
+                        outstring += str(pep.sidechain_exchange) + " "
+
         f.write(outstring + "\n")
 
 

@@ -303,13 +303,16 @@ def get_residue_deuteration_at_each_timepoint(dataset, protection_factors):
 
     return deuterations_by_time
 
-def calculate_incorporation(intrinsic, protection_factors, timepoints, offset=0):
+def calculate_incorporation(intrinsic, protection_factors, timepoints, offset=0, back_exchange=None):
     if len(intrinsic) != len(protection_factors):
         raise Exception("Intrinsic exchange factors and protection factor list not the same length")
     # incorporations is a dictionary of dictionaries, with the first dictionary keyed by residue number and the second 
     # It is indexed by residue number (1 = 1)
     #
     # res_incorps is keyed by timepoint
+    if back_exchange is None:
+        back_exchange = numpy.zeros(len(intrinsic))
+
     incorporations = {}
     for n in range(len(intrinsic)):
 
@@ -319,7 +322,7 @@ def calculate_incorporation(intrinsic, protection_factors, timepoints, offset=0)
                 res_incorps[tp] = 0
             else:
                 log_kex = intrinsic[n] - protection_factors[n]
-                res_incorps[tp] = calculate_simple_deuterium_incorporation(log_kex, tp)
+                res_incorps[tp] = calculate_simple_deuterium_incorporation(log_kex, tp) * (1-back_exchange[n])
                 #print("||||||||", intrinsic[n], protection_factors[n], log_kex, tp, res_incorps[tp])
         incorporations[n+1+offset] = res_incorps
 
@@ -633,6 +636,9 @@ def refine_dataset(dataset):
         # back exchange
         back_exchange = 1 - pep.max_d/pep.num_observable_amides*dataset.conditions.saturation
         pep.set_back_exchange(back_exchange)
+
+        #side chain exchange
+        pep.set_sidechain_exchange(0)
         
     for tp in dataset.get_all_timepoints():
         sigma = get_iso_sigma(tp, loss='AE')

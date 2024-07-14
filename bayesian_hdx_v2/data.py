@@ -603,6 +603,9 @@ class Peptide(object):
     def set_back_exchange(self, value):
         self.back_exchange = value
 
+    def set_sidechain_exchange(self, value):
+        self.sidechain_exchange = value
+
 class Timepoint(object):
     '''
     Timepoint objects are bound to a specific Fragment, where Timepoint represents

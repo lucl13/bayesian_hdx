@@ -220,6 +220,7 @@ class MCSampler(object):
                 if_sample_centroid_sigma=False,
                 if_sample_envelope_sigma=False,
                 if_sample_back_exchange=False,
+                if_sample_sidechain_exchange=False,
                 pct_moves=25, 
                 accept_range=(0.3, 0.8)):
         # Ensure that all states in system has a dataset and a model and a scoring function
@@ -250,9 +251,11 @@ class MCSampler(object):
         self.if_sample_centroid_sigma = if_sample_centroid_sigma
         self.if_sample_envelope_sigma = if_sample_envelope_sigma
         self.if_sample_back_exchange = if_sample_back_exchange
+        self.if_sample_sidechain_exchange = if_sample_sidechain_exchange
         self.centroid_sigma_sampler = SampledFloat(0.1, 2, 0.05)
         self.envelope_sigma_sampler = SampledFloat(0.1, 1, 0.05)
         self.back_exchange_sampler = SampledFloat(0.0, 0.5, 0.05)
+        self.sidechain_exchange_sampler = SampledFloat(0, 0.3, 0.05)
         self.pct_moves = pct_moves
         self.acceptance_range = accept_range
         # Recalculates all sectors and timepoint data.
@@ -459,7 +462,7 @@ class MCSampler(object):
                     else:
                         model = st.output_model.get_model()
 
-                    output.write_model_to_file(output_files[s], st, model, st.score, acceptance, sigmas=False, back_exchange=True)
+                    output.write_model_to_file(output_files[s], st, model, st.score, acceptance, sigmas=False, back_exchange=True, sidechain_exchange=True)
 
         acceptance_ratio = acceptance_total/NSTEPS
         print("Average acceptance ratio for this run = ", acceptance_ratio, " |  Temp = ", temperature)
@@ -656,11 +659,15 @@ class MCSampler(object):
             if self.if_sample_centroid_sigma or self.if_sample_envelope_sigma:
                 # for d in state.data:
                 if random.random() < 0.2:
-                    self.sample_sigma(state, 0.01)
+                    self.sample_sigma(state, temperature/10)
 
             if self.if_sample_back_exchange:
                 if random.random() < 0.2:
-                    self.sample_back_exchange(state, 0.01)
+                    self.sample_back_exchange(state, temperature/10)
+
+            if self.if_sample_sidechain_exchange:
+                #if random.random() < 0.2:
+                self.sample_sidechain_exchange(state, 0)
 
             # Recalculate the state score and add it to the total score
             final_state_score = state.calculate_peptides_score(state.get_all_peptides(), state.output_model.get_current_model())
@@ -733,7 +740,13 @@ class MCSampler(object):
             init_score = state.calculate_peptides_score([pep], state.output_model.get_current_model())
             init_rep_score = state.all_rep_data['rep_score'].copy()
             init_back_exchange = pep.back_exchange
+
+            exp_back_exchange = 1 - pep.max_d/pep.num_observable_amides*state.data[0].conditions.saturation
+            self.back_exchange_sampler.upper_bound = min(exp_back_exchange + 0.3, 1)
+            self.back_exchange_sampler.lower_bound = max(exp_back_exchange - 0.3, 0)
             new_back_exchange = self.back_exchange_sampler.propose_move(init_back_exchange)
+            # exp_back_exchange = 1 - pep.max_d/pep.num_observable_amides*state.data[0].conditions.saturation
+            # new_back_exchange = random.uniform(exp_back_exchange-0.3, exp_back_exchange+0.3)
 
             pep.back_exchange = new_back_exchange
             new_score = state.calculate_peptides_score([pep], state.output_model.get_current_model())
@@ -779,20 +792,38 @@ class MCSampler(object):
 
     def sample_sidechain_exchange(self, state, temperature):
 
-        for pep in state.get_all_peptides():
-            init_score = state.calculate_peptides_score([pep], state.output_model.get_current_model())
-            init_rep_score = state.all_rep_data['rep_score'].copy()
-            init_sidechain_exchange = pep.sidechain_exchange
-            new_sidechain_exchange = self.sidechain_exchange_sampler.propose_move(init_sidechain_exchange)
+        # for pep in state.get_all_peptides():
+        #     init_score = state.calculate_peptides_score([pep], state.output_model.get_current_model())
+        #     init_rep_score = state.all_rep_data['rep_score'].copy()
+        #     init_sidechain_exchange = pep.sidechain_exchange
+        #     new_sidechain_exchange = self.sidechain_exchange_sampler.propose_move(init_sidechain_exchange)
 
+        #     pep.sidechain_exchange = new_sidechain_exchange
+        #     new_score = state.calculate_peptides_score([pep], state.output_model.get_current_model())
+
+        #     if not metropolis_criteria(init_score, new_score, temperature):
+        #         # Reset the sidechain exchange back to the original one
+        #         pep.sidechain_exchange = init_sidechain_exchange
+        #         state.set_score(init_score)
+        #         state.all_rep_data['rep_score'] = init_rep_score
+
+        # dataset level
+        peptides = state.get_all_peptides()
+        init_score = state.calculate_peptides_score(peptides, state.output_model.get_current_model())
+        init_rep_score = state.all_rep_data['rep_score'].copy()
+        init_sidechain_exchange = peptides[0].sidechain_exchange
+        new_sidechain_exchange = self.sidechain_exchange_sampler.propose_move(init_sidechain_exchange)
+
+        for pep in peptides:
             pep.sidechain_exchange = new_sidechain_exchange
-            new_score = state.calculate_peptides_score([pep], state.output_model.get_current_model())
+        new_score = state.calculate_peptides_score(peptides, state.output_model.get_current_model())
 
-            if not metropolis_criteria(init_score, new_score, temperature):
-                # Reset the sidechain exchange back to the original one
+        if not metropolis_criteria(init_score, new_score, temperature):
+            # Reset the sidechain exchange back to the original one
+            for pep in peptides:
                 pep.sidechain_exchange = init_sidechain_exchange
-                state.set_score(init_score)
-                state.all_rep_data['rep_score'] = init_rep_score
+            state.set_score(init_score)
+            state.all_rep_data['rep_score'] = init_rep_score
 
 
 

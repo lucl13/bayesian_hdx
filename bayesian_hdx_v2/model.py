@@ -37,6 +37,7 @@ class ResidueGridModel(object):
         self.protection_factors = protection_factors
         self.model = numpy.zeros(self.length)   # The model values that are used in the sampler
         self.model_protection_factors = numpy.ones(self.length)*-1  # The protection factors
+        self.model_back_exchange = numpy.zeros(self.length)  # The back exchange values
         self.sampler_type = "int"
         self.sampler_size = range(1, grid_size+1)
         self.state.set_output_model(self)
@@ -188,4 +189,7 @@ class ResidueGridModel(object):
 
     def get_current_model(self):
         return self.convert_model_to_protection_factors(self.model)
+    
+    def get_model_back_exchange(self):
+        return self.model_back_exchange
 

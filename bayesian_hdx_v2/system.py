@@ -366,7 +366,11 @@ class State(object):
         for d in self.data:
 
             timepoints = set([tp.time for tp in d.get_all_timepoints()])
-            self.residue_incorporations[d] = tools.calculate_incorporation(numpy.ones(len(protection_factors))*d.get_intrinsic_rates(), protection_factors, timepoints)
+            self.residue_incorporations[d] = tools.calculate_incorporation(numpy.ones(len(protection_factors))*d.get_intrinsic_rates(), 
+                                                                           protection_factors, 
+                                                                           timepoints, 
+                                                                           back_exchange=self.output_model.model_back_exchange
+                                                                           )
             #print(protection_factors, self.residue_incorporations[d])
             d.sum_residue_incorporations(self.residue_incorporations[d])
 
@@ -582,6 +586,8 @@ class State(object):
 
         all_rep_data['exp_centroid'] = np.dot(np.arange(20), all_rep_data['isotope_envelope'].T)
         all_rep_data['t0_centroid'] = np.dot(np.arange(20), all_rep_data['t0_p_D'].T)
+        all_rep_data['sidechain_exchange'] = np.zeros(all_rep_data['exp_centroid'].shape, dtype=np.float32)
+        all_rep_data['exp_back_exchange'] = 1-all_rep_data['max_d'][:,0]/all_rep_data['num_observable_amides'][:,0]*self.data[0].conditions.saturation
 
         return all_rep_data
 
