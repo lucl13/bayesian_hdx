@@ -363,8 +363,7 @@ class GaussianNoiseModelIsotope(object):
 
     This model gathers its standard deviation parameters from the individual timepoint objects.
     '''
-    def __init__(self, state, envelope_sigma=0.3, centroid_sigma=0.5, w_envelope = 1.0, w_centroid = 1.0, truncated=False, bounds=(None, None), time_window=(None, None)):
-        
+    def __init__(self, state, envelope_sigma=0.3, centroid_sigma=0.5, w_envelope = 1.0, w_centroid = 1.0, truncated=False, bounds=(None, None), time_window=(None, None), peak_num=20, peak_threshold=(0.1, 1.0)):
         self.truncated = truncated
         self.state = state
         self.envelope_sigma = envelope_sigma
@@ -381,6 +380,8 @@ class GaussianNoiseModelIsotope(object):
             self.upper_bound = None
             self.lower_bound = None
 
+        self.peak_num = peak_num
+        self.peak_threshold = peak_threshold
 
     def replicate_score(self, model=None, exp=None, model_centroid=None, exp_centroid=None):
 
@@ -388,11 +389,12 @@ class GaussianNoiseModelIsotope(object):
         # se = (model - exp) ** 2
         # sse = np.sum(se, axis=1)
 
-        mask = exp > 0.1
+        #mask = exp > 0.1
+        mask = (exp > self.peak_threshold[0] ) & (exp < self.peak_threshold[1])
         model_filtered = np.where(mask, model, 0)
         exp_filtered = np.where(mask, exp, 0)
         se = (model_filtered - exp_filtered) ** 2
-        sse = np.sum(se, axis=1)
+        sse = np.sum(se[:,:self.peak_num], axis=1)
         envelope_likelihood = np.exp(-(sse) / (2 * self.envelope_sigma ** 2)) / (self.envelope_sigma * np.sqrt(2 * np.pi))
 
         #envelope_likelihood = np.exp(-(sum_ae ** 2) / (2 * self.envelope_sigma ** 2)) / (self.envelope_sigma * np.sqrt(2 * np.pi))
@@ -443,7 +445,7 @@ class GaussianNoiseModelIsotope(object):
         
         # Prepare data for only the affected peptides
         #all_rep_data['residue_incorporations'], all_rep_data['back_exchange'] = self._prepare_residue_incorporations_data(peptides)
-        self._prepare_residue_incorporations_data(peptides)
+        self._prepare_residue_incorporations_data(peptides, peptides_rep_indices)
         all_rep_data['model_centroid'], all_rep_data['model_full_iso'] = calculate_model_full_iso(all_rep_data, peptides_rep_indices)
 
         # Calculate score for updated peptides
@@ -467,7 +469,7 @@ class GaussianNoiseModelIsotope(object):
         return total_score
 
 
-    def _prepare_residue_incorporations_data(self, peptides):
+    def _prepare_residue_incorporations_data(self, peptides, peptides_rep_indices):
         d = self.state.data[0]
         res_incorp = []
         back_exchange = []
@@ -475,6 +477,7 @@ class GaussianNoiseModelIsotope(object):
         
         all_rep_data = self.state.all_rep_data
         mask = all_rep_data['observable_residues'] != 0
+        mask = mask[peptides_rep_indices]
 
         for pep in peptides:
             observable_residues = pep.get_observable_residue_numbers()
@@ -491,7 +494,7 @@ class GaussianNoiseModelIsotope(object):
                     sidechain_exchange.extend([padded_sidechain_exchange] * replicates)
 
 
-        all_rep_data['residue_incorporations'] = np.array(res_incorp).reshape(-1, 20)
+        all_rep_data['residue_incorporations'] = np.array(res_incorp).reshape(-1, 20) * self.state.data[0].conditions.saturation
         all_rep_data['back_exchange'] = np.where(mask, np.array(back_exchange), 0)
         all_rep_data['sidechain_exchange'] = np.where(mask, np.array(sidechain_exchange), 0) * self.state.data[0].conditions.saturation
         #return np.array(res_incorp).reshape(-1, 20), np.array(back_exchange), np.array(sidechain_exchange)

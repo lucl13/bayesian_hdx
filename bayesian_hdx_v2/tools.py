@@ -634,7 +634,7 @@ def refine_dataset(dataset):
         pep.get_best_charge_state()
 
         # back exchange
-        back_exchange = 1 - pep.max_d/pep.num_observable_amides*dataset.conditions.saturation
+        back_exchange = 1 - pep.max_d/(pep.num_observable_amides*dataset.conditions.saturation)
         pep.set_back_exchange(back_exchange)
 
         #side chain exchange

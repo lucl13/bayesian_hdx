@@ -369,7 +369,7 @@ class State(object):
             self.residue_incorporations[d] = tools.calculate_incorporation(numpy.ones(len(protection_factors))*d.get_intrinsic_rates(), 
                                                                            protection_factors, 
                                                                            timepoints, 
-                                                                           back_exchange=self.output_model.model_back_exchange
+                                                                           #back_exchange=self.output_model.model_back_exchange
                                                                            )
             #print(protection_factors, self.residue_incorporations[d])
             d.sum_residue_incorporations(self.residue_incorporations[d])

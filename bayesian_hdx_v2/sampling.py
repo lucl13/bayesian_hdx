@@ -790,40 +790,44 @@ class MCSampler(object):
                 state.all_rep_data['rep_score'] = old_rep_score
 
 
-    def sample_sidechain_exchange(self, state, temperature):
+    def sample_sidechain_exchange(self, state, temperature, sample_level='dataset'):
 
-        # for pep in state.get_all_peptides():
-        #     init_score = state.calculate_peptides_score([pep], state.output_model.get_current_model())
-        #     init_rep_score = state.all_rep_data['rep_score'].copy()
-        #     init_sidechain_exchange = pep.sidechain_exchange
-        #     new_sidechain_exchange = self.sidechain_exchange_sampler.propose_move(init_sidechain_exchange)
+        # peptide level
+        if sample_level == 'peptide':
+            for pep in state.get_all_peptides():
+                init_score = state.calculate_peptides_score([pep], state.output_model.get_current_model())
+                init_rep_score = state.all_rep_data['rep_score'].copy()
+                init_sidechain_exchange = pep.sidechain_exchange
+                new_sidechain_exchange = self.sidechain_exchange_sampler.propose_move(init_sidechain_exchange)
 
-        #     pep.sidechain_exchange = new_sidechain_exchange
-        #     new_score = state.calculate_peptides_score([pep], state.output_model.get_current_model())
+                pep.sidechain_exchange = new_sidechain_exchange
+                new_score = state.calculate_peptides_score([pep], state.output_model.get_current_model())
 
-        #     if not metropolis_criteria(init_score, new_score, temperature):
-        #         # Reset the sidechain exchange back to the original one
-        #         pep.sidechain_exchange = init_sidechain_exchange
-        #         state.set_score(init_score)
-        #         state.all_rep_data['rep_score'] = init_rep_score
+                if not metropolis_criteria(init_score, new_score, temperature):
+                    # Reset the sidechain exchange back to the original one
+                    pep.sidechain_exchange = init_sidechain_exchange
+                    state.set_score(init_score)
+                    state.all_rep_data['rep_score'] = init_rep_score
 
         # dataset level
-        peptides = state.get_all_peptides()
-        init_score = state.calculate_peptides_score(peptides, state.output_model.get_current_model())
-        init_rep_score = state.all_rep_data['rep_score'].copy()
-        init_sidechain_exchange = peptides[0].sidechain_exchange
-        new_sidechain_exchange = self.sidechain_exchange_sampler.propose_move(init_sidechain_exchange)
+        if sample_level == 'dataset':
+            peptides = state.get_all_peptides()
+            init_score = state.calculate_peptides_score(peptides, state.output_model.get_current_model())
+            init_rep_score = state.all_rep_data['rep_score'].copy()
+            init_sidechain_exchange = peptides[0].sidechain_exchange
 
-        for pep in peptides:
-            pep.sidechain_exchange = new_sidechain_exchange
-        new_score = state.calculate_peptides_score(peptides, state.output_model.get_current_model())
+            new_sidechain_exchange = self.sidechain_exchange_sampler.propose_move(init_sidechain_exchange)
 
-        if not metropolis_criteria(init_score, new_score, temperature):
-            # Reset the sidechain exchange back to the original one
             for pep in peptides:
-                pep.sidechain_exchange = init_sidechain_exchange
-            state.set_score(init_score)
-            state.all_rep_data['rep_score'] = init_rep_score
+                pep.sidechain_exchange = new_sidechain_exchange
+            new_score = state.calculate_peptides_score(peptides, state.output_model.get_current_model())
+
+            if not metropolis_criteria(init_score, new_score, temperature):
+                # Reset the sidechain exchange back to the original one
+                for pep in peptides:
+                    pep.sidechain_exchange = init_sidechain_exchange
+                state.set_score(init_score)
+                state.all_rep_data['rep_score'] = init_rep_score
 
 
 

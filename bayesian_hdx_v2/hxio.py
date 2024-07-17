@@ -767,14 +767,14 @@ class Output(object):
         if back_exchange:
             for d in state.data:
                 for pep in d.get_peptides():
-                        outstring += str(pep.back_exchange) + " "
+                        outstring += f"{pep.back_exchange:.3f}" + " "
 
         outstring += " || "
 
         if sidechain_exchange:
             for d in state.data:
                 for pep in d.get_peptides():
-                        outstring += str(pep.sidechain_exchange) + " "
+                        outstring += f"{pep.sidechain_exchange:.3f}" + " "
 
         f.write(outstring + "\n")
 
