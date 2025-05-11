@@ -29,11 +29,14 @@ class ResidueGridModel(object):
     @param protection_factors - Boolean. Set to true to calculate protection factors. False to calculate rates only.
     '''
     def __init__(self, state, grid_size, protection_factors=False, 
-                sample_back_exchange=True, sample_only_observed_residues=True):
+                sample_back_exchange=True, sample_only_observed_residues=True,
+                lower_bound=None, upper_bound=None):
         self.state = deepcopy(state)
         self.length = len(state.get_sequence())
 
         self.grid_size = grid_size
+        self.lower_bound = lower_bound
+        self.upper_bound = upper_bound
         self.protection_factors = protection_factors
         self.model = numpy.zeros(self.length)   # The model values that are used in the sampler
         self.model_protection_factors = numpy.ones(self.length)*-1  # The protection factors
@@ -132,9 +135,17 @@ class ResidueGridModel(object):
             #pf_ranges = [pf[n] for pf in observable_pfs]
             if self.protection_factors:
                 # Protection factors are set up between 0 and 10
-                pf_grid = numpy.linspace( 0, 14, self.grid_size )
+                #pf_grid = numpy.linspace( 0, 14, self.grid_size )
+                if self.lower_bound is not None and self.upper_bound is not None:
+                    pf_grid = numpy.linspace( self.lower_bound, self.upper_bound, self.grid_size )
+                else:
+                    pf_grid = numpy.linspace( 0, 14, self.grid_size )
             else:
-                pf_grid = numpy.linspace( 0, 14, self.grid_size )
+               #pf_grid = numpy.linspace( 0, 14, self.grid_size )
+                if self.lower_bound is not None and self.upper_bound is not None:
+                    pf_grid = numpy.linspace( self.lower_bound, self.upper_bound, self.grid_size )
+                else:
+                    pf_grid = numpy.linspace( 0, 14, self.grid_size )
             pf_grids.append(pf_grid)
 
         self.pf_grids = pf_grids
